@@ -84,3 +84,16 @@ test('findSubstitutes returns [] when available, unknown, or nothing applies', (
   assert.deepEqual(findSubstitutes(db, { partNum: 'nope', color: 2 }), []);
   assert.deepEqual(findSubstitutes(db, { partNum: '33085', color: 2 }), []);
 });
+
+test('findByUse and findCompatible apply the shared part filters', () => {
+  assert.equal(findByUse(db, { represents: 'petal', nameContains: 'banana', minSetCount: 1 }).length, 1);
+  assert.deepEqual(findByUse(db, { represents: 'petal', traits: ['slope'] }), []);
+  assert.deepEqual(findByUse(db, { represents: 'petal', width: 4 }), []);
+
+  assert.deepEqual(nums(findCompatible(db, { connectionType: 'stud', width: 4, depth: 2 })), ['3001']);
+  const recv = nums(findCompatible(db, { connectionType: 'stud_receptor' }));
+  assert.ok(recv.includes('3001'));
+  assert.ok(!recv.includes('3437'));
+  assert.ok(nums(findCompatible(db, { connectionType: 'stud_receptor', includeNonSystem: true })).includes('3437'));
+  assert.deepEqual(nums(findCompatible(db, { connectionType: 'stud_receptor', category: 'plates' })), ['3023']);
+});

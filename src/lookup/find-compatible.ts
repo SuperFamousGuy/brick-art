@@ -2,16 +2,15 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { ConnectionType } from '../types.ts';
 import {
   ORDER_BY, SUMMARY_COLUMNS, buildPartWhere, clampLimit, toSummaries,
-  type PartSummary, type SummaryRow,
+  type PartFilter, type PartSummary, type SummaryRow,
 } from './common.ts';
 
-export interface FindCompatibleArgs {
+export type FindCompatibleArgs = PartFilter & {
   connectionType?: ConnectionType;
   partNum?: string;
   connectionIndex?: number;
-  color?: number;
   limit?: number;
-}
+};
 
 export interface CompatibleMatch {
   part: PartSummary;
@@ -49,14 +48,15 @@ export function findCompatible(db: DatabaseSync, args: FindCompatibleArgs): Comp
   if (targets.length === 0) return [];
 
   const tmarks = targets.map(() => '?').join(',');
-  const { sql, params } = buildPartWhere({ color: args.color });
+  const { connectionType: _t, partNum: _p, connectionIndex: _i, limit, ...filter } = args;
+  const { sql, params } = buildPartWhere(filter);
   const rows = db
     .prepare(
       `SELECT ${SUMMARY_COLUMNS} FROM parts p
        WHERE ${sql} AND EXISTS (SELECT 1 FROM connections c WHERE c.part_num = p.part_num AND c.type IN (${tmarks}))
        ORDER BY ${ORDER_BY} LIMIT ?`,
     )
-    .all(...params, ...targets, clampLimit(args.limit)) as unknown as SummaryRow[];
+    .all(...params, ...targets, clampLimit(limit)) as unknown as SummaryRow[];
   if (rows.length === 0) return [];
 
   const pmarks = rows.map(() => '?').join(',');
