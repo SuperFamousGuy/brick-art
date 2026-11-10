@@ -65,3 +65,15 @@ test('assembleProject cuts cycles', () => {
   assert.deepEqual(a.stats, { placements: 2, resolved: 1 });
   assert.deepEqual(a.parts, []);
 });
+
+test('assembleProject passes color 16 down through nested submodels', () => {
+  const text = [
+    '0 FILE m.ldr', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 a.ldr',
+    '0 FILE a.ldr', '1 16 0 0 0 1 0 0 0 1 0 0 0 1 b.ldr',
+    '0 FILE b.ldr', '1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat',
+  ].join('\n');
+  const m = parseModel(text, 'm.mpd');
+  const a = assembleProject(m.main, m.files, maps, counter());
+  assert.deepEqual(a.parts.map((p) => [p.partNum, p.colorId, p.quantity]), [['3001', 4, 1]]);
+  assert.deepEqual(a.stats, { placements: 3, resolved: 3 });
+});

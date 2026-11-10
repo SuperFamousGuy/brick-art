@@ -78,6 +78,20 @@ test('second call within maxAgeHours makes zero requests', async (t) => {
   assert.deepEqual(second.records, first.records);
 });
 
+test('an old-style extraction without LDConfig.ldr is replaced', async (t) => {
+  const s = await setup(t);
+  const first = await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
+  const sha = first.records.find((r) => r.name === 'ldraw')!.sha256;
+  const oldDir = join(s.cacheDir, 'extract', `ldraw-${sha}`);
+  await rm(first.ldrawRoot, { recursive: true, force: true });
+  await mkdir(join(oldDir, 'parts'), { recursive: true });
+  await writeFile(join(oldDir, 'parts', '3001.dat'), 'old');
+  const out = await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
+  assert.ok((await stat(join(out.ldrawRoot, 'LDConfig.ldr'))).isFile());
+  assert.notEqual(out.ldrawRoot, oldDir);
+  await assert.rejects(stat(oldDir));
+});
+
 test('refresh: true downloads again', async (t) => {
   const s = await setup(t);
   await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });

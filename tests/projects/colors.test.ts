@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { buildColorMap, buildPartMap } from '../../src/projects/colors.ts';
 import type { RbColor } from '../../src/sources/rebrickable.ts';
 import { writeFixtureSources } from '../helpers/fixtures.ts';
-import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 const RB: RbColor[] = [
@@ -18,8 +17,9 @@ const RB: RbColor[] = [
   { id: 9999, name: '[No Color/Any Color]', rgb: 'DA70D6', isTrans: false },
 ];
 
-test('buildColorMap maps by id, name, and RGB, and reports the rate', async () => {
+test('buildColorMap maps by id, name, and RGB, and reports the rate', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'brick-art-colors-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const fx = await writeFixtureSources(dir);
   const ldconfig = await readFile(join(fx.ldrawRoot, 'LDConfig.ldr'), 'utf8');
   const { map, rate } = buildColorMap(ldconfig, RB);
@@ -42,6 +42,12 @@ test('buildColorMap falls back to a unique name or RGB with a different id', () 
   const { map, rate } = buildColorMap(cfg, rb);
   assert.deepEqual([...map], [[71, 71], [5, 90]]);
   assert.equal(rate, 1);
+});
+
+test('buildColorMap treats hyphens and underscores alike in names', () => {
+  const rb: RbColor[] = [{ id: 47, name: 'Trans-Clear', rgb: 'FCFCFC', isTrans: true }];
+  const cfg = '0 !COLOUR Trans_Clear CODE 99 VALUE #000001 EDGE #000000';
+  assert.deepEqual([...buildColorMap(cfg, rb).map], [[99, 47]]);
 });
 
 test('buildPartMap prefers the part that owns the geometry', () => {

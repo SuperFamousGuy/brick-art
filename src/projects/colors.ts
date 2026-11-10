@@ -2,7 +2,7 @@ import type { RbColor } from '../sources/rebrickable.ts';
 import { normalizeRef } from './mpd.ts';
 
 const normName = (name: string): string =>
-  name.toLowerCase().replaceAll('_', ' ').replaceAll('grey', 'gray').replace(/\s+/g, ' ').trim();
+  name.toLowerCase().replace(/[_-]/g, ' ').replaceAll('grey', 'gray').replace(/\s+/g, ' ').trim();
 const normRgb = (rgb: string): string => rgb.replace(/^#/, '').toUpperCase();
 
 const COLOUR_LINE = /^\s*0\s+!COLOUR\s+(\S+)\s+CODE\s+(\d+)\s+VALUE\s+#([0-9A-Fa-f]{6})\b/;

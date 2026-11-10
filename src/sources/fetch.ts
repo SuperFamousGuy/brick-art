@@ -143,10 +143,12 @@ function publicRecord({ commit: _commit, ...record }: StoredRecord): SourceRecor
 
 async function ensureExtracted(
   cacheDir: string, prefix: string, zipFile: string, sha256: string,
-  keep: (path: string) => boolean, strip: RegExp,
+  keep: (path: string) => boolean, strip: RegExp, keySuffix = '',
 ): Promise<string> {
   const extractDir = join(cacheDir, 'extract');
-  const target = join(extractDir, `${prefix}-${sha256}`);
+  // keySuffix versions the keep predicate: a changed predicate must not reuse an older extraction.
+  const key = `${prefix}-${sha256}${keySuffix}`;
+  const target = join(extractDir, key);
   const exists = await stat(target).then((s) => s.isDirectory(), () => false);
   if (!exists) {
     const tmp = `${target}.tmp-${process.pid}`;
@@ -163,7 +165,7 @@ async function ensureExtracted(
   }
   try {
     for (const entry of await readdir(extractDir)) {
-      if (entry.startsWith(`${prefix}-`) && entry !== `${prefix}-${sha256}`) {
+      if (entry.startsWith(`${prefix}-`) && entry !== key) {
         await rm(join(extractDir, entry), { recursive: true, force: true }).catch(() => {});
       }
     }
@@ -220,7 +222,7 @@ export async function fetchSources(cacheDir: string, opts: FetchOptions): Promis
 
   const ldrawRoot = await ensureExtracted(
     cacheDir, 'ldraw', join(cacheDir, 'ldraw.zip'), ldraw.sha256,
-    (p) => /^(parts|p)\//.test(p) || p === 'LDConfig.ldr', /^ldraw\//,
+    (p) => /^(parts|p)\//.test(p) || p === 'LDConfig.ldr', /^ldraw\//, '-v2',
   );
   const shadowRoot = await ensureExtracted(
     cacheDir, 'ldcad', join(cacheDir, 'ldcad.zip'), ldcad.sha256,
