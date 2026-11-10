@@ -35,7 +35,7 @@
 # Tile 1 x 2 with Groove
 - part: "3069b"
   represents: book
-  note: 1x2 tiles stacked flat on a shelf read as a pile of books
+  note: 1x2 tiles mounted upright on the side studs of SNOT bricks along a shelf read as book spines
   reviewed: false
 
 # Plate 1 x 1
@@ -401,13 +401,13 @@
 # Antenna 1 x 4 with Rounded Top
 - part: "3957a"
   represents: flagpole
-  note: the base attaches on a stud, with a flag clipped on the shaft
+  note: the base attaches on a stud and the thin upright shaft reads as a flagpole
   reviewed: false
 
 # Antenna 1 x 4 with Flat Top
 - part: "3957b"
   represents: flagpole
-  note: the base attaches on a stud, with a flag clipped on the shaft
+  note: the base attaches on a stud and the thin upright shaft reads as a flagpole
   reviewed: false
 
 # Rock 1 x 1 Jewel / Gem 24 Facet
