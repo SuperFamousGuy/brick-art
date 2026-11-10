@@ -5,6 +5,8 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { readPointer } from '../../src/db/open.ts';
 import { dataPaths } from '../../src/paths.ts';
 import { buildRelease } from '../../src/release/build.ts';
@@ -211,4 +213,73 @@ test('runUpdate returns busy while another process holds the lock', async (t) =>
   assert.equal(existsSync(dataPaths(dataDir).lock), true);
   assert.equal(readPointer(dataDir), null);
   assert.equal(server.hits.size, 0);
+});
+
+const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+
+/** A release whose standard asset is a valid download of a database with one manifest key changed. */
+async function releaseWithManifest(t: T, key: string, value: string): Promise<FakeRelease> {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-craft-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = join(dir, 'standard.db');
+  await writeFile(file, gunzipSync(assets.get('standard.db.gz')!));
+  const db = new DatabaseSync(file);
+  db.prepare('UPDATE manifest SET value = ? WHERE key = ?').run(value, key);
+  db.close();
+  const raw = await readFile(file);
+  const gz = gzipSync(raw);
+  const meta = JSON.parse(assets.get('release.json')!.toString('utf8'));
+  meta.variants.standard = { ...meta.variants.standard, gzSha256: sha(gz), gzBytes: gz.length, dbSha256: sha(raw), dbBytes: raw.length };
+  return release(TAG, { 'standard.db.gz': gz, 'release.json': JSON.stringify(meta) });
+}
+
+for (const [key, value] of [['seed_version', '2'], ['variant', 'full']] as const) {
+  test(`a verified download whose manifest ${key} is wrong is rejected`, async (t) => {
+    const server = await serve(t, [await releaseWithManifest(t, key, value)]);
+    const dataDir = await seededDataDir(t);
+    const before = readPointer(dataDir);
+    const r = await runUpdate({ dataDir, repoRoot, variant: 'standard', apiBase: server.url, runSeedImpl: throwingSeed });
+    assert.deepEqual(r, { outcome: 'kept', tag: null });
+    assert.equal(readPointer(dataDir), before);
+    assert.deepEqual(await partFiles(dataDir), []);
+    assert.deepEqual(await dbFiles(dataDir), [before]);
+    assert.match(readUpdateState(dataDir).lastError ?? '', new RegExp(key));
+  });
+}
+
+test('a failed download with no usable database seeds the fallback', async (t) => {
+  const server = await serve(t, [release(TAG, { 'standard.db.gz': 500 })]);
+  const dataDir = await freshDataDir(t);
+  const r = await runUpdate({
+    dataDir, repoRoot, variant: 'standard', apiBase: server.url, seed: { sources: fixtureFetched(fx) },
+  });
+  assert.deepEqual(r, { outcome: 'fallback_seeded', tag: null });
+  assert.equal(manifest(dataDir, 'variant'), 'fallback');
+  assert.deepEqual(await partFiles(dataDir), []);
+  assert.match(readUpdateState(dataDir).lastError ?? '', /500/);
+});
+
+test('a failing fallback seed releases the lock, writes update.json and rethrows', async (t) => {
+  const server = await serve(t, []);
+  const dataDir = await freshDataDir(t);
+  await assert.rejects(
+    runUpdate({ dataDir, repoRoot, variant: 'standard', apiBase: server.url, runSeedImpl: throwingSeed }),
+    /runSeed must not be called/,
+  );
+  assert.equal(existsSync(dataPaths(dataDir).lock), false);
+  const state = readUpdateState(dataDir);
+  assert.ok(state.lastCheckedAt !== null);
+  assert.match(state.lastError ?? '', /runSeed must not be called/);
+});
+
+test('an unreadable current database is kept, not replaced by a local seed', async (t) => {
+  const server = await serve(t, [], 403);
+  const dataDir = await freshDataDir(t);
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(join(dataDir, 'parts-20260101T000000.db'), 'not a database, possibly locked or mid-copy');
+  await writeFile(dataPaths(dataDir).pointer, JSON.stringify({ file: 'parts-20260101T000000.db' }));
+  const r = await runUpdate({ dataDir, repoRoot, variant: 'standard', apiBase: server.url, runSeedImpl: throwingSeed });
+  assert.deepEqual(r, { outcome: 'kept', tag: null });
+  assert.equal(readPointer(dataDir), 'parts-20260101T000000.db');
+  assert.match(readUpdateState(dataDir).lastError ?? '', /could not be read/);
 });

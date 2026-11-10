@@ -152,24 +152,32 @@ export function writeUpdateState(dataDir: string, state: UpdateState): void {
   renameSync(tmp, file);
 }
 
+/** The manifest of `file`, or null when the file does not exist. Open and read errors throw. */
 function readManifest(file: string): Map<string, string> | null {
   if (!existsSync(file)) return null;
-  let db: DatabaseSync | null = null;
+  const db = new DatabaseSync(file, { readOnly: true });
   try {
-    db = new DatabaseSync(file, { readOnly: true });
     const rows = db.prepare('SELECT key, value FROM manifest').all() as { key: string; value: string }[];
     return new Map(rows.map((r) => [r.key, r.value]));
-  } catch {
-    return null;
   } finally {
-    try { db?.close(); } catch { /* ignore */ }
+    try { db.close(); } catch { /* ignore */ }
   }
 }
 
-/** True when the pointer names an existing database built for this SEED_VERSION. */
-function usableDb(dataDir: string): boolean {
+/**
+ * `usable` when the pointer names an existing database built for this SEED_VERSION; `unusable` when
+ * the pointer or file is missing or the schema differs; `unknown` when the database could not be read,
+ * which may be transient, so it must not be replaced by a local seed.
+ */
+type DbStatus = 'usable' | 'unusable' | 'unknown';
+function dbStatus(dataDir: string): DbStatus {
   const name = readPointer(dataDir);
-  return name !== null && readManifest(join(dataDir, name))?.get('seed_version') === String(SEED_VERSION);
+  if (name === null) return 'unusable';
+  try {
+    return readManifest(join(dataDir, name))?.get('seed_version') === String(SEED_VERSION) ? 'usable' : 'unusable';
+  } catch {
+    return 'unknown';
+  }
 }
 
 /** Deletes the downloader's partial files; failures are ignored. */
@@ -258,7 +266,6 @@ async function installRelease(
     const m = meter(`${meta.file} (gunzipped)`, meta.dbBytes);
     await pipeline(createReadStream(gzPart), createGunzip(), m.stream, createWriteStream(dbPart));
     m.verify(meta.dbSha256);
-    rmSync(gzPart, { force: true });
     renameSync(dbPart, dbFile);
 
     const manifest = readManifest(dbFile);
@@ -277,6 +284,7 @@ async function installRelease(
     throw err;
   }
   // The new database is live from here on: nothing below may fail the update.
+  try { rmSync(gzPart, { force: true }); } catch { /* removed at the next run's start */ }
   try {
     for (const name of readdirSync(dataDir)) {
       if (!/^parts-.*\.db$/.test(name) || name === basename(dbFile)) continue;
@@ -312,35 +320,49 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
   const next = readUpdateState(dataDir);
   /** False once the fallback seed has taken over the seed state. */
   let ownsState = true;
-  const finishState = (ok: boolean, failures: number, lastError: string | null) => writeState(paths.state, {
-    status: ok ? 'ready' : 'failed', startedAt, finishedAt: new Date().toISOString(), lastError, failures,
-  });
+  /** Bookkeeping only: a failure is logged and never changes the outcome. */
+  const finishState = (ok: boolean, failures: number, lastError: string | null) => {
+    try {
+      writeState(paths.state, {
+        status: ok ? 'ready' : 'failed', startedAt, finishedAt: new Date().toISOString(), lastError, failures,
+      });
+    } catch (err) {
+      log(`could not write seed state: ${errText(err)}`);
+    }
+  };
   try {
     removeParts(dataDir);
     writeState(paths.state, { status: 'seeding', startedAt, finishedAt: null, lastError: null, failures: prior.failures });
 
-    let error: string;
+    let result: UpdateResult | null = null;
+    let error = '';
     try {
       const release = await findRelease(SEED_VERSION, opts.apiBase);
       if (release === null) throw new Error(`no published release for schema ${SEED_VERSION}`);
       if (!opts.force && release.tag === next.releaseTag && next.variant === opts.variant &&
-        next.origin === 'release' && usableDb(dataDir)) {
-        next.lastError = null;
-        finishState(true, 0, null);
-        return { outcome: 'current', tag: release.tag };
+        next.origin === 'release' && dbStatus(dataDir) === 'usable') {
+        result = { outcome: 'current', tag: release.tag };
+      } else {
+        log(`downloading ${opts.variant} from ${release.tag}`);
+        await installRelease(dataDir, release, opts.variant, log);
+        Object.assign(next, { releaseTag: release.tag, variant: opts.variant, origin: 'release' });
+        result = { outcome: 'updated', tag: release.tag };
       }
-      log(`downloading ${opts.variant} from ${release.tag}`);
-      await installRelease(dataDir, release, opts.variant, log);
-      Object.assign(next, { releaseTag: release.tag, variant: opts.variant, origin: 'release', lastError: null });
-      finishState(true, 0, null);
-      return { outcome: 'updated', tag: release.tag };
     } catch (err) {
       error = errText(err);
       log(`update failed: ${error}`);
     }
+    if (result !== null) {
+      next.lastError = null;
+      finishState(true, 0, null);
+      return result;
+    }
 
     next.lastError = error;
-    if (usableDb(dataDir)) {
+    const status = dbStatus(dataDir);
+    if (status !== 'unusable') {
+      // An unreadable database may be a transient error: keep it rather than replace it.
+      if (status === 'unknown') next.lastError = `${error}; current database could not be read`;
       log('keeping the current database');
       finishState(true, prior.failures, null);
       return { outcome: 'kept', tag: null };
@@ -356,10 +378,8 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
     next.lastError = errText(err);
     log(`update failed: ${next.lastError}`);
     if (ownsState) {
-      try {
-        if (usableDb(dataDir)) finishState(true, prior.failures, null);
-        else finishState(false, prior.failures + 1, next.lastError);
-      } catch { /* ignore */ }
+      if (dbStatus(dataDir) !== 'unusable') finishState(true, prior.failures, null);
+      else finishState(false, prior.failures + 1, next.lastError);
     }
     throw err;
   } finally {
