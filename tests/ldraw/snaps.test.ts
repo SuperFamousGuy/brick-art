@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { expandSnap, gridOffsets, parseSnapLine, snapPosOri } from '../../src/ldraw/snaps.ts';
+import { SnapParseError, expandSnap, gridOffsets, parseSnapLine, snapPosOri } from '../../src/ldraw/snaps.ts';
 
 const expand = (line: string) => expandSnap(parseSnapLine(line), line);
 const fgr = (g: string) =>
@@ -70,4 +70,24 @@ test('snapPosOri defaults and gridOffsets', () => {
   assert.deepEqual(d.ori, [1, 0, 0, 0, 1, 0, 0, 0, 1]);
   assert.deepEqual(gridOffsets(undefined), [[0, 0, 0]]);
   assert.deepEqual(gridOffsets('3 2 10 5'), [[0, 0, 0], [0, 0, 5], [10, 0, 0], [10, 0, 5], [20, 0, 0], [20, 0, 5]]);
+});
+
+test('malformed input throws SnapParseError naming the parameter and line', () => {
+  const cases: [string, RegExp][] = [
+    ['0 !LDCAD SNAP_CYL [secs=R 6 4] [pos=0 24]', /pos.*0 24.*in line: 0 !LDCAD SNAP_CYL/],
+    ['0 !LDCAD SNAP_CYL [secs=R 6 4] [ori=1 0 0 0 1 0]', /ori/],
+    ['0 !LDCAD SNAP_CYL [secs=R 6 4] [grid=C 4 x 20 20]', /grid/],
+    ['0 !LDCAD SNAP_CYL [secs=R 6 4] [grid=C 4 C 2 20]', /grid/],
+    ['0 !LDCAD SNAP_CYL [secs=R 6]', /secs/],
+    ['0 !LDCAD SNAP_CYL [secs=R six 4]', /secs/],
+    ['0 !LDCAD SNAP_FOO [pos=0 0 0]', /kind/],
+    ['0 !LDCAD SNAP_CYL [grid=101 1 20 20]', /exceeds 100/],
+    ['0 !LDCAD SNAP_CYL [grid=C 1 C 101 20 20]', /exceeds 100/],
+  ];
+  for (const [line, re] of cases) {
+    assert.throws(() => parseSnapLine(line), (e) => e instanceof SnapParseError && re.test(e.message), line);
+  }
+  assert.throws(() => gridOffsets('1e9 1 20 20'), SnapParseError);
+  assert.equal(gridOffsets('100 1 20 20').length, 100);
+  assert.throws(() => expandSnap({ kind: 'CYL', params: { pos: 'a b c' } }, 'RAW'), /RAW/);
 });
