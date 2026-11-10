@@ -272,14 +272,55 @@ test('a failing fallback seed releases the lock, writes update.json and rethrows
   assert.match(state.lastError ?? '', /runSeed must not be called/);
 });
 
-test('an unreadable current database is kept, not replaced by a local seed', async (t) => {
-  const server = await serve(t, [], 403);
+/** A data dir whose pointer names `parts-20260101T000000.db`, written by `make`. */
+async function brokenDataDir(t: T, make: (file: string) => Promise<void>): Promise<string> {
   const dataDir = await freshDataDir(t);
   await mkdir(dataDir, { recursive: true });
-  await writeFile(join(dataDir, 'parts-20260101T000000.db'), 'not a database, possibly locked or mid-copy');
+  await make(join(dataDir, 'parts-20260101T000000.db'));
   await writeFile(dataPaths(dataDir).pointer, JSON.stringify({ file: 'parts-20260101T000000.db' }));
-  const r = await runUpdate({ dataDir, repoRoot, variant: 'standard', apiBase: server.url, runSeedImpl: throwingSeed });
+  return dataDir;
+}
+
+const broken: [string, (file: string) => Promise<void>][] = [
+  ['a non-SQLite file', (file) => writeFile(file, 'not a database, just text that fills more than a header '.repeat(4))],
+  ['a database without a manifest table', async (file) => {
+    const db = new DatabaseSync(file);
+    db.exec('CREATE TABLE parts (part_num TEXT)');
+    db.close();
+  }],
+  ['a truncated database', async (file) => {
+    await writeFile(file, gunzipSync(assets.get('standard.db.gz')!).subarray(0, 8192));
+  }],
+];
+for (const [label, make] of broken) {
+  test(`${label} is unusable: with no release the fallback is seeded`, async (t) => {
+    const server = await serve(t, []);
+    const dataDir = await brokenDataDir(t, make);
+    const r = await runUpdate({
+      dataDir, repoRoot, variant: 'standard', apiBase: server.url, seed: { sources: fixtureFetched(fx) },
+    });
+    assert.deepEqual(r, { outcome: 'fallback_seeded', tag: null });
+    assert.equal(manifest(dataDir, 'variant'), 'fallback');
+    assert.deepEqual(await dbFiles(dataDir), [readPointer(dataDir)]);
+  });
+}
+
+test('a database locked by another connection (SQLITE_BUSY) is kept, not replaced by a local seed', async (t) => {
+  const server = await serve(t, [], 403);
+  const dataDir = await seededDataDir(t);
+  const before = readPointer(dataDir)!;
+  const priorState = readState(dataPaths(dataDir).state);
+  const holder = new DatabaseSync(join(dataDir, before));
+  holder.exec("BEGIN EXCLUSIVE; INSERT OR REPLACE INTO manifest (key, value) VALUES ('probe', '1')");
+  let r;
+  try {
+    r = await runUpdate({ dataDir, repoRoot, variant: 'standard', apiBase: server.url, runSeedImpl: throwingSeed });
+  } finally {
+    holder.exec('ROLLBACK');
+    holder.close();
+  }
   assert.deepEqual(r, { outcome: 'kept', tag: null });
-  assert.equal(readPointer(dataDir), 'parts-20260101T000000.db');
+  assert.equal(readPointer(dataDir), before);
   assert.match(readUpdateState(dataDir).lastError ?? '', /could not be read/);
+  assert.deepEqual(readState(dataPaths(dataDir).state), priorState);
 });

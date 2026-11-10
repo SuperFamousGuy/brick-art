@@ -164,19 +164,32 @@ function readManifest(file: string): Map<string, string> | null {
   }
 }
 
+const SQLITE_CORRUPT = 11;
+const SQLITE_NOTADB = 26;
+
+/** True for node:sqlite errors that will recur on every open: not a database, corrupt, or no manifest table. */
+function isPermanentDbError(err: unknown): boolean {
+  const e = err as { code?: unknown; errcode?: unknown; message?: unknown };
+  if (e?.code !== 'ERR_SQLITE_ERROR' || typeof e.errcode !== 'number') return false;
+  const primary = e.errcode & 0xff; // extended result codes keep the primary code in the low byte
+  if (primary === SQLITE_CORRUPT || primary === SQLITE_NOTADB) return true;
+  return typeof e.message === 'string' && /no such table: manifest\b/.test(e.message);
+}
+
 /**
  * `usable` when the pointer names an existing database built for this SEED_VERSION; `unusable` when
- * the pointer or file is missing or the schema differs; `unknown` when the database could not be read,
- * which may be transient, so it must not be replaced by a local seed.
+ * the pointer or file is missing, the schema differs, or the file is not a readable SQLite database
+ * with a manifest; `unknown` for errors that may be transient (busy, locked, I/O, permissions), so
+ * the database must not be replaced by a local seed.
  */
 type DbStatus = 'usable' | 'unusable' | 'unknown';
 function dbStatus(dataDir: string): DbStatus {
-  const name = readPointer(dataDir);
-  if (name === null) return 'unusable';
   try {
+    const name = readPointer(dataDir);
+    if (name === null) return 'unusable';
     return readManifest(join(dataDir, name))?.get('seed_version') === String(SEED_VERSION) ? 'usable' : 'unusable';
-  } catch {
-    return 'unknown';
+  } catch (err) {
+    return isPermanentDbError(err) ? 'unusable' : 'unknown';
   }
 }
 
@@ -330,6 +343,18 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
       log(`could not write seed state: ${errText(err)}`);
     }
   };
+  /** Final seed state for a run that ends without installing: never `ready` for an unreadable database. */
+  const finishWithout = (status: DbStatus, lastError: string) => {
+    if (status === 'usable') finishState(true, prior.failures, null);
+    else if (status === 'unusable') finishState(false, prior.failures + 1, lastError);
+    else {
+      try {
+        writeState(paths.state, prior.status === 'seeding' ? { ...prior, status: 'failed', lastError } : prior);
+      } catch (err) {
+        log(`could not write seed state: ${errText(err)}`);
+      }
+    }
+  };
   try {
     removeParts(dataDir);
     writeState(paths.state, { status: 'seeding', startedAt, finishedAt: null, lastError: null, failures: prior.failures });
@@ -364,7 +389,7 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
       // An unreadable database may be a transient error: keep it rather than replace it.
       if (status === 'unknown') next.lastError = `${error}; current database could not be read`;
       log('keeping the current database');
-      finishState(true, prior.failures, null);
+      finishWithout(status, next.lastError);
       return { outcome: 'kept', tag: null };
     }
     log('no usable database; seeding the fallback locally');
@@ -377,10 +402,7 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
   } catch (err) {
     next.lastError = errText(err);
     log(`update failed: ${next.lastError}`);
-    if (ownsState) {
-      if (dbStatus(dataDir) !== 'unusable') finishState(true, prior.failures, null);
-      else finishState(false, prior.failures + 1, next.lastError);
-    }
+    if (ownsState) finishWithout(dbStatus(dataDir), next.lastError);
     throw err;
   } finally {
     next.lastCheckedAt = new Date().toISOString();
