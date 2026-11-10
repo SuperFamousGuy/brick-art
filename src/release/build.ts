@@ -68,7 +68,14 @@ export function deriveStandard(fullFile: string, outFile: string): void {
       DELETE FROM project_parts WHERE project_id IN (SELECT id FROM projects WHERE kind = 'fan');
       DELETE FROM projects WHERE kind = 'fan';
       INSERT OR REPLACE INTO manifest (key, value) VALUES ('variant', 'standard'), ('count_projects_fan', '0');
+      INSERT OR REPLACE INTO manifest (key, value)
+        SELECT 'count_projects_with_positions', CAST(count(*) AS TEXT) FROM projects WHERE has_positions = 1;
     `);
+    const failed = db.prepare("SELECT value FROM manifest WHERE key = 'failed_sources'").get() as { value: string } | undefined;
+    if (failed !== undefined) {
+      const kept = failed.value.split(',').filter((id) => id === 'omr').join(',');
+      db.prepare("UPDATE manifest SET value = ? WHERE key = 'failed_sources'").run(kept);
+    }
     db.exec('VACUUM');
   } finally {
     db.close();

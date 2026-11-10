@@ -38,6 +38,10 @@ jobs:
           set -o pipefail
           node --max-old-space-size=3072 src/entry/release.mjs --out out | tee build.log
           echo "tag=$(tail -n 1 build.log)" >> "$GITHUB_OUTPUT"
+      - name: Validate tag
+        env:
+          TAG: ${{ steps.build.outputs.tag }}
+        run: '[[ "$TAG" =~ ^data-[0-9]+-[0-9]{8}$ ]] || { echo "bad tag: $TAG"; exit 1; }'
       - name: Replace an existing release with the same tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,3 +59,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node src/release/prune.ts
+      - name: Show seed log
+        if: failure()
+        run: cat .data/seed.log || true

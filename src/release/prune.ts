@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 
 const TAG = /^data-(\d+)-(\d{8})$/;
 const KEEP = 3;
@@ -31,4 +32,4 @@ export function main(): void {
   }
 }
 
-if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) main();
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(import.meta.filename)) main();

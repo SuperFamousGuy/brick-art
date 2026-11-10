@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { gunzipSync } from 'node:zlib';
-import { buildRelease, checkGates } from '../../src/release/build.ts';
+import { buildRelease, checkGates, deriveStandard } from '../../src/release/build.ts';
 import { MPD_10001_MINI, MPD_CLEAN } from '../helpers/models.ts';
 import type { FakeReply } from '../helpers/models.ts';
 import { fixtureSeedOptions, omrPages } from '../helpers/seeded.ts';
@@ -63,6 +63,11 @@ test('buildRelease writes both databases, release.json and CREDITS.md', async (t
   assert.equal(manifest(counts.standard!, 'variant'), 'standard');
   assert.equal(manifest(counts.standard!, 'count_projects_fan'), '0');
   assert.equal(manifest(counts.full!, 'variant'), 'full');
+  const withPositions = (db: DatabaseSync) =>
+    String((db.prepare('SELECT count(*) AS n FROM projects WHERE has_positions = 1').get() as { n: number }).n);
+  assert.equal(manifest(counts.standard!, 'count_projects_with_positions'), withPositions(counts.standard!));
+  assert.equal(manifest(counts.full!, 'count_projects_with_positions'), withPositions(counts.full!));
+  assert.notEqual(withPositions(counts.standard!), withPositions(counts.full!));
   const orphans = counts.standard!.prepare(
     `SELECT (SELECT count(*) FROM project_parts WHERE project_id NOT IN (SELECT id FROM projects)) +
             (SELECT count(*) FROM submodels WHERE project_id NOT IN (SELECT id FROM projects)) +
@@ -106,4 +111,21 @@ test('checkGates reports each failed gate', () => {
   db.exec(`UPDATE manifest SET value='0.99' WHERE key<>'failed_sources'; UPDATE manifest SET value='fan_x' WHERE key='failed_sources';
     DELETE FROM projects WHERE id=2; DELETE FROM parts WHERE part_num='b'`);
   assert.deepEqual(checkGates(db), []);
+});
+
+test('deriveStandard drops fan source ids from failed_sources but keeps omr', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-derive-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const full = join(dir, 'full.db');
+  const db = new DatabaseSync(full);
+  db.exec(`CREATE TABLE manifest (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE projects (id INTEGER, kind TEXT, has_positions INTEGER);
+    CREATE TABLE project_parts (project_id INTEGER); CREATE TABLE submodels (id INTEGER, project_id INTEGER);
+    CREATE TABLE placements (submodel_id INTEGER);
+    INSERT INTO manifest VALUES ('failed_sources','omr,fan_x');`);
+  db.close();
+  deriveStandard(full, join(dir, 'std.db'));
+  const std = new DatabaseSync(join(dir, 'std.db'), { readOnly: true });
+  assert.equal((std.prepare("SELECT value FROM manifest WHERE key='failed_sources'").get() as { value: string }).value, 'omr');
+  std.close();
 });
