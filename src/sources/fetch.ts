@@ -55,7 +55,7 @@ const USER_AGENT = 'brick-art-seed';
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 
 /** Aborts `signal` when `touch()` has not been called for `ms`. */
-function idleGuard(ms: number) {
+export function idleGuard(ms: number) {
   const controller = new AbortController();
   let timedOut = false;
   let timer: NodeJS.Timeout;

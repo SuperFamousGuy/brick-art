@@ -50,6 +50,8 @@ export interface SeedOptions {
   omr?: { baseUrl?: string; backoffMs?: number; files?: OmrFile[] };
   /** Test hooks: GitHub API and codeload base URLs for fan sources. */
   fanFetch?: Pick<FanFetchOptions, 'githubApi' | 'codeload'>;
+  /** Neither acquire nor release the seed lock: the caller (the updater) already holds it. */
+  skipLock?: boolean;
 }
 export interface SeedResult {
   /** Absolute path of the new database; empty when another seed already holds the lock. */
@@ -68,7 +70,8 @@ function stampOf(d: Date): string {
     `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
 }
 
-function uniqueDbFile(dataDir: string, start: Date): string {
+/** A `parts-<UTC stamp>.db` path in `dataDir` that does not exist yet. */
+export function uniqueDbFile(dataDir: string, start: Date): string {
   const paths = dataPaths(dataDir);
   const d = new Date(start);
   while (existsSync(paths.dbFile(stampOf(d)))) d.setUTCSeconds(d.getUTCSeconds() + 1);
@@ -81,7 +84,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   mkdirSync(opts.dataDir, { recursive: true });
   const log = (msg: string) => appendFileSync(paths.log, `${now().toISOString()} ${msg}\n`);
 
-  if (!acquireLock(paths.lock)) {
+  if (!opts.skipLock && !acquireLock(paths.lock)) {
     log('seed already running; skipping');
     return { dbFile: '', counts: {} };
   }
@@ -323,7 +326,9 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     } catch { /* ignore */ }
     throw err;
   } finally {
-    try { releaseLock(paths.lock); } catch { /* ignore */ }
+    if (!opts.skipLock) {
+      try { releaseLock(paths.lock); } catch { /* ignore */ }
+    }
   }
 }
 

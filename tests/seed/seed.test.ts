@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cp, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { runSeed } from '../../src/seed/seed.ts';
 import { readState } from '../../src/seed/lock.ts';
@@ -152,6 +152,16 @@ test('runSeed returns without work when another seed holds the lock', async (t) 
   const r = await runSeed({ dataDir: s.dataDir, repoRoot, refresh: false, sources: s.sources });
   assert.equal(r.dbFile, '');
   assert.equal(readPointer(s.dataDir), null);
+  assert.equal(existsSync(dataPaths(s.dataDir).lock), true);
+});
+
+test('runSeed with skipLock seeds under a lock its caller holds and leaves the lock alone', async (t) => {
+  const s = await setup(t);
+  await mkdir(s.dataDir, { recursive: true });
+  await writeFile(dataPaths(s.dataDir).lock, String(process.pid));
+  const r = await runSeed({ dataDir: s.dataDir, repoRoot, refresh: false, sources: s.sources, skipLock: true });
+  assert.notEqual(r.dbFile, '');
+  assert.equal(readPointer(s.dataDir), basename(r.dbFile));
   assert.equal(existsSync(dataPaths(s.dataDir).lock), true);
 });
 

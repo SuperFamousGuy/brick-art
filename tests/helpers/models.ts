@@ -106,3 +106,34 @@ export async function startFakeOmr(
     close: () => new Promise<void>((resolve) => { server.close(() => resolve()); server.closeAllConnections(); }),
   };
 }
+
+export interface FakeRelease {
+  tag: string;
+  prerelease?: boolean;
+  /** Asset name → reply, served at `/download/<tag>/<name>`. */
+  assets: Map<string, FakeReply | FakeReply[]>;
+}
+
+/**
+ * Fake GitHub releases API for `SuperFamousGuy/brick-art` on top of `startFakeOmr`. The list
+ * endpoint answers `api` when given (for example 403), else the releases as GitHub's JSON array with
+ * `browser_download_url`s on the same server. Asset hits are counted under `/download/...`.
+ */
+export async function startFakeReleases(
+  releases: FakeRelease[], opts: { api?: FakeReply | FakeReply[] } = {},
+): Promise<Awaited<ReturnType<typeof startFakeOmr>>> {
+  const pages = new Map<string, FakeReply | FakeReply[]>();
+  const server = await startFakeOmr(pages);
+  const list = releases.map((r) => ({
+    tag_name: r.tag,
+    prerelease: r.prerelease ?? true,
+    assets: [...r.assets.keys()].map((name) => ({
+      name, browser_download_url: `${server.url}/download/${r.tag}/${name}`,
+    })),
+  }));
+  pages.set('/repos/SuperFamousGuy/brick-art/releases', opts.api ?? JSON.stringify(list));
+  for (const r of releases) {
+    for (const [name, reply] of r.assets) pages.set(`/download/${r.tag}/${name}`, reply);
+  }
+  return server;
+}
