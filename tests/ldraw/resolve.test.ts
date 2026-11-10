@@ -97,3 +97,25 @@ test('repeated resolution reuses the memo for shared primitives', () => {
   assert.deepEqual(a.connections, b.connections);
   assert.equal(a.triangles.length, b.triangles.length);
 });
+
+test('duplicate snap errors are reported once', () => {
+  const l = LDrawLibrary.fromMaps(
+    new Map([['parts/w.dat', `${studStud}\n${studStud}\n`], ['p/stud.dat', '']]),
+    new Map([['p/stud.dat', '0 !LDCAD SNAP_CYL [pos=1 2]\n']]));
+  assert.equal(resolvePart(l, 'w.dat').errors.length, 1);
+});
+
+test('mutating a result does not affect later resolutions', () => {
+  const a = resolvePart(lib, '3001.dat');
+  const n = a.connections.length;
+  const first = a.triangles[0]![0][0];
+  a.connections[0]!.position[0] = 9999;
+  a.triangles[0]![0][0] = 9999;
+  a.connections.length = 0;
+  a.bodyTriangles.length = 0;
+  const b = resolvePart(lib, '3001.dat');
+  assert.equal(b.connections.length, n);
+  assert.equal(b.triangles[0]![0][0], first);
+  assert.ok(b.bodyTriangles.length > 0);
+  assert.notEqual(b.connections[0]!.position[0], 9999);
+});

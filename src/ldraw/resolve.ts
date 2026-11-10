@@ -17,8 +17,11 @@ export interface ResolvedPart {
 
 /** One file resolved in its own frame (before the parent's placement is applied). */
 interface Local {
-  triangles: Triangle[];
-  bodyTriangles: Triangle[];
+  /** Flat x,y,z * 3 per triangle, in this file's frame. */
+  triangles: Float64Array;
+  /** Same array as `triangles` when the subtree has no stud primitive. */
+  bodyTriangles: Float64Array;
+  license: string | null;
   snaps: ConnectionPoint[];
   inferred: ConnectionPoint[];
   /** True when any LDCad snap existed in the tree, even if a SNAP_CLEAR later dropped it. */
@@ -28,7 +31,7 @@ interface Local {
   cyclic: boolean;
 }
 
-interface Memo { parsed: Map<string, ParsedFile | null>; local: Map<string, Local> }
+interface Memo { local: Map<string, Local> }
 
 const memos = new WeakMap<LDrawLibrary, Memo>();
 const STUD_BODY_RE = /^(p\/)?(stud[0-9a-z]*|stu2[0-9a-z]*)\.dat$/;
@@ -38,7 +41,7 @@ const MAX_INCL_DEPTH = 8;
 
 function memoFor(lib: LDrawLibrary): Memo {
   let m = memos.get(lib);
-  if (!m) { m = { parsed: new Map(), local: new Map() }; memos.set(lib, m); }
+  if (!m) { m = { local: new Map() }; memos.set(lib, m); }
   return m;
 }
 
@@ -64,16 +67,21 @@ function placePoint(pt: ConnectionPoint, pos: Vec3, m: Mat3): ConnectionPoint {
   return { ...pt, position: place(pos, m, pt.position), direction: unit(mulVec(m, pt.direction)) };
 }
 
-function placeTri(t: Triangle, pos: Vec3, m: Mat3): Triangle {
-  return [place(pos, m, t[0]), place(pos, m, t[1]), place(pos, m, t[2])];
+/** Append `src` (flat vertices) placed by pos/m to `out`. */
+function placeFlat(src: ArrayLike<number>, pos: Vec3, m: Mat3, out: number[]): void {
+  for (let i = 0; i < src.length; i += 3) {
+    const x = src[i]!, y = src[i + 1]!, z = src[i + 2]!;
+    out.push(
+      pos[0] + m[0] * x + m[1] * y + m[2] * z + 0,
+      pos[1] + m[3] * x + m[4] * y + m[5] * z + 0,
+      pos[2] + m[6] * x + m[7] * y + m[8] * z + 0,
+    );
+  }
 }
 
-function parseCached(lib: LDrawLibrary, memo: Memo, name: string): ParsedFile | null {
-  if (memo.parsed.has(name)) return memo.parsed.get(name)!;
+function parseFile(lib: LDrawLibrary, name: string): ParsedFile | null {
   const text = lib.read(name);
-  const parsed = text === null ? null : parseLDraw(text);
-  memo.parsed.set(name, parsed);
-  return parsed;
+  return text === null ? null : parseLDraw(text);
 }
 
 /** Expand the snaps of one shadow file (own lines and INCL targets), in that file's frame. */
@@ -114,24 +122,32 @@ function shadowSnaps(
   return out;
 }
 
+const NO_TRIS = new Float64Array(0);
+
 function resolveLocal(lib: LDrawLibrary, memo: Memo, name: string, path: Set<string>, top: boolean): Local {
   const cached = memo.local.get(name);
   if (cached) return cached;
 
   const result: Local = {
-    triangles: [], bodyTriangles: [], snaps: [], inferred: [], sawSnaps: false,
+    triangles: NO_TRIS, bodyTriangles: NO_TRIS, license: null, snaps: [], inferred: [], sawSnaps: false,
     missingRefs: [], errors: [], cyclic: false,
   };
-  const parsed = parseCached(lib, memo, name);
+  const parsed = parseFile(lib, name);
   if (parsed === null) {
     result.missingRefs.push(name);
     memo.local.set(name, result);
     return result;
   }
 
+  result.license = parsed.license;
   const isStud = STUD_BODY_RE.test(name);
-  result.triangles.push(...parsed.tris);
-  if (!isStud) result.bodyTriangles.push(...parsed.tris);
+  let hasStud = isStud;
+  const tris: number[] = [];
+  const body: number[] = [];
+  for (const t of parsed.tris) {
+    for (const v of t) tris.push(v[0], v[1], v[2]);
+  }
+  if (!isStud) for (const v of tris) body.push(v); // no spread: arrays can exceed the argument limit
 
   const clears: Array<string | null> = [];
   result.snaps.push(...shadowSnaps(lib, name, result.errors, clears, 0));
@@ -149,10 +165,9 @@ function resolveLocal(lib: LDrawLibrary, memo: Memo, name: string, path: Set<str
       result.inferred.push(inferred('stud_receptor', [0, 1, 0], ref.pos, ref.matrix, child));
     }
     const sub = resolveLocal(lib, memo, child, path, false);
-    for (const t of sub.triangles) result.triangles.push(placeTri(t, ref.pos, ref.matrix));
-    if (!isStud) {
-      for (const t of sub.bodyTriangles) result.bodyTriangles.push(placeTri(t, ref.pos, ref.matrix));
-    }
+    placeFlat(sub.triangles, ref.pos, ref.matrix, tris);
+    if (sub.bodyTriangles !== sub.triangles) hasStud = true;
+    if (!isStud) placeFlat(sub.bodyTriangles, ref.pos, ref.matrix, body);
     for (const s of sub.snaps) childSnaps.push(placePoint(s, ref.pos, ref.matrix));
     for (const s of sub.inferred) result.inferred.push(placePoint(s, ref.pos, ref.matrix));
     result.missingRefs.push(...sub.missingRefs);
@@ -161,6 +176,8 @@ function resolveLocal(lib: LDrawLibrary, memo: Memo, name: string, path: Set<str
     if (sub.cyclic) result.cyclic = true;
   }
   path.delete(name);
+  result.triangles = Float64Array.from(tris);
+  result.bodyTriangles = hasStud ? Float64Array.from(body) : result.triangles;
 
   const clearAll = clears.includes(null);
   const clearIds = new Set(clears.filter((c): c is string => c !== null));
@@ -194,13 +211,27 @@ export function resolvePart(lib: LDrawLibrary, file: string): ResolvedPart {
   const name = lib.normalize(file);
   const local = resolveLocal(lib, memo, name, new Set(), true);
   const uniq = (xs: string[]): string[] => [...new Set(xs)];
+  // Everything returned is a fresh copy so callers cannot corrupt the memo.
+  const toTris = (flat: Float64Array): Triangle[] => {
+    const out: Triangle[] = [];
+    for (let i = 0; i < flat.length; i += 9) {
+      out.push([
+        [flat[i]!, flat[i + 1]!, flat[i + 2]!],
+        [flat[i + 3]!, flat[i + 4]!, flat[i + 5]!],
+        [flat[i + 6]!, flat[i + 7]!, flat[i + 8]!],
+      ]);
+    }
+    return out;
+  };
+  const triangles = toTris(local.triangles);
+  const points = local.sawSnaps ? local.snaps : local.inferred;
   return {
-    triangles: local.triangles,
-    bodyTriangles: local.bodyTriangles,
-    connections: local.sawSnaps ? local.snaps : local.inferred,
-    license: parseCached(lib, memo, name)?.license ?? null,
+    triangles,
+    bodyTriangles: toTris(local.bodyTriangles),
+    connections: points.map((c) => ({ ...c, position: [...c.position], direction: [...c.direction] })),
+    license: local.license,
     missingRefs: uniq(local.missingRefs),
     cyclic: local.cyclic,
-    errors: local.errors,
+    errors: uniq(local.errors),
   };
 }
