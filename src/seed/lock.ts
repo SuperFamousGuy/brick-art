@@ -34,6 +34,11 @@ function isStale(lockPath: string): boolean {
   }
 }
 
+/** True when a live process holds the lock (same liveness rules as acquireLock). */
+export function isLockHeld(lockPath: string): boolean {
+  return !isStale(lockPath);
+}
+
 /** Creates the lock with complete content, or returns false when it is held. */
 function createLock(lockPath: string): boolean {
   const tmp = `${lockPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
