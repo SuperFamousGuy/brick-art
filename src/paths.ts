@@ -1,7 +1,16 @@
 import path from 'node:path';
 
+const INSTALLED_PLUGIN = /[\\/]\.claude[\\/]plugins[\\/]cache(?:[\\/]|$)/;
+
+/**
+ * The data directory: BRICK_ART_DATA, then CLAUDE_PLUGIN_DATA, then `<repoRoot>/.data` for development.
+ * Empty variables count as unset. An installed plugin's root is never written to, so there is no fallback.
+ */
 export function resolveDataDir(env: NodeJS.ProcessEnv, repoRoot: string): string {
-  return env.CLAUDE_PLUGIN_DATA || env.BRICK_ART_DATA || path.join(repoRoot, '.data');
+  const fromEnv = env.BRICK_ART_DATA || env.CLAUDE_PLUGIN_DATA;
+  if (fromEnv) return fromEnv;
+  if (INSTALLED_PLUGIN.test(repoRoot)) throw new Error('no data directory: set CLAUDE_PLUGIN_DATA or BRICK_ART_DATA');
+  return path.join(repoRoot, '.data');
 }
 
 export interface DataPaths {

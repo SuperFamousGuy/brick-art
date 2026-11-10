@@ -6,9 +6,10 @@ assertNodeVersion();
 
 // stdout belongs to the MCP transport; log only to stderr.
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const dataDir = process.env.BRICK_ART_DATA || process.env.CLAUDE_PLUGIN_DATA || resolve(repoRoot, '.data');
 
 try {
+  const { resolveDataDir } = await import('../paths.ts');
+  const dataDir = resolveDataDir(process.env, repoRoot);
   const { createServer } = await import('../mcp/server.ts');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const server = createServer(dataDir);
