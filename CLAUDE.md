@@ -30,6 +30,11 @@ For each prompt, produce all three of these:
 
 ## Status
 
-The project is at its start. No code, part catalog, or output format exists
-yet. Design decisions such as the model representation, part catalog source,
-and rendering approach are still open.
+The parts database and lookup tools exist: a local database of real parts,
+colors, and connection geometry, exposed to Claude through an MCP server. The
+model representation, the instruction format, and the rendering approach are
+still open.
+
+The plugin packaging is in `.claude-plugin/`. Opening this repo directly in
+Claude Code is for development only; test the plugin with
+`claude --plugin-dir .`.

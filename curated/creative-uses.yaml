@@ -1,0 +1,573 @@
+# Curated creative part uses: parts that builders commonly use for something
+# other than their original purpose. Every entry starts as reviewed: false and
+# is shown to users only as a "suggestion" until a person reviews it.
+#
+# Entries are grouped by part, most common parts first. Keep "represents" to a
+# short lowercase noun phrase, and reuse existing wording (for example "eye",
+# "light", "spike") so searches group well.
+
+# Plate Round 1 x 1 with Solid Stud
+- part: "6141"
+  represents: eye
+  note: a white or black 1x1 round plate, often with a black 1x1 round tile on a white one for a pupil
+  reviewed: false
+- part: "6141"
+  represents: light
+  note: in a transparent color it reads as a lamp, indicator, or signal light
+  reviewed: false
+- part: "6141"
+  represents: button
+  note: a small round plate on a panel or tile reads as a control button
+  reviewed: false
+- part: "6141"
+  represents: flower center
+  note: placed in the middle of a ring of petals, often in yellow
+  reviewed: false
+- part: "6141"
+  represents: berry
+  note: red or dark blue round plates scattered on green foliage
+  reviewed: false
+- part: "6141"
+  represents: wheel
+  note: mounted sideways on a SNOT brick as a microscale car wheel
+  reviewed: false
+
+# Tile 1 x 2 with Groove
+- part: "3069b"
+  represents: book
+  note: 1x2 tiles mounted upright on the side studs of SNOT bricks along a shelf read as book spines
+  reviewed: false
+
+# Plate 1 x 1
+- part: "3024"
+  represents: mosaic pixel
+  note: 1x1 plates side by side on a baseplate form a pixel image
+  reviewed: false
+
+# Brick Sloped 30° 1 x 1 x 2/3 (Cheese Slope)
+- part: "54200"
+  represents: shingle
+  note: rows of cheese slopes overlap like roof shingles or scales
+  reviewed: false
+- part: "54200"
+  represents: ear
+  note: a pair of cheese slopes on a head reads as pointed animal ears
+  reviewed: false
+- part: "54200"
+  represents: beak
+  note: a single cheese slope on a small bird's head
+  reviewed: false
+- part: "54200"
+  represents: mosaic pixel
+  note: cheese slopes laid sideways give a mosaic with angled edges
+  reviewed: false
+
+# Plate Round 2 x 2 with Axle Hole Type 1 (+ Opening)
+- part: "4032a"
+  represents: wheel
+  note: fixed on an axle through the center hole as a small wheel
+  reviewed: false
+- part: "4032a"
+  represents: dinner plate
+  note: a white 2x2 round plate on a table reads as a plate for minifigures
+  reviewed: false
+
+# Tile 1 x 4 with Groove
+- part: "2431"
+  represents: plank
+  note: tan or brown 1x4 tiles in rows read as wooden planks or decking
+  reviewed: false
+
+# Brick Round 1 x 1 Open Stud
+- part: "3062b"
+  represents: column
+  note: stacked 1x1 round bricks form a thin column or pillar
+  reviewed: false
+- part: "3062b"
+  represents: tree trunk
+  note: a brown stack makes a thin trunk for a small tree
+  reviewed: false
+- part: "3062b"
+  represents: candle
+  note: a white stack topped with a flame or a yellow round plate
+  reviewed: false
+- part: "3062b"
+  represents: bollard
+  note: a short stack beside a road or dock reads as a bollard
+  reviewed: false
+
+# Tile Special 1 x 2 Grille with Bottom Groove
+- part: "2412b"
+  represents: vent
+  note: a grille tile on a wall, roof, or vehicle reads as a vent
+  reviewed: false
+- part: "2412b"
+  represents: grille
+  note: rows of grille tiles form a radiator or drain grate
+  reviewed: false
+
+# Tile 1 x 1 with Groove
+- part: "3070b"
+  represents: mosaic pixel
+  note: 1x1 tiles give a smooth, studless mosaic surface
+  reviewed: false
+
+# Brick Sloped 30° 1 x 2 x 2/3
+- part: "85984"
+  represents: shingle
+  note: overlapping rows give a low-angle roof of shingles
+  reviewed: false
+
+# Tile Round 1 x 1
+- part: "98138"
+  represents: eye
+  note: a white or black 1x1 round tile gives a smooth eye
+  reviewed: false
+- part: "98138"
+  represents: coin
+  note: a gold or silver round tile reads as a coin
+  reviewed: false
+- part: "98138"
+  represents: button
+  note: a round tile on a panel reads as a control button
+  reviewed: false
+- part: "98138"
+  represents: light
+  note: in a transparent color it reads as an indicator or lamp lens
+  reviewed: false
+
+# Brick Curved 2 x 1 No Studs [1/2 Bow]
+- part: "11477"
+  represents: fender
+  note: curves over a wheel as a fender on cars and bikes
+  reviewed: false
+
+# Brick Round 2 x 2 with Axle Hole
+- part: "3941"
+  represents: barrel
+  note: a 2x2 round brick
+  reviewed: false
+- part: "3941"
+  represents: tree trunk
+  note: stacked brown round bricks form a thick tree trunk
+  reviewed: false
+- part: "3941"
+  represents: column
+  note: stacked round bricks form a round column or pillar
+  reviewed: false
+- part: "3941"
+  represents: flower pot
+  note: a single round brick under a plant reads as a flower pot
+  reviewed: false
+
+# Technic Brick 1 x 2 [1 Pin Hole]
+- part: "3700"
+  represents: porthole
+  note: the pin hole in a wall reads as a porthole or round window
+  reviewed: false
+
+# Cone 1 x 1 [Top Groove]
+- part: "59900"
+  represents: nose
+  note: an orange cone on a snowman, or a cone on a creature's face
+  reviewed: false
+- part: "59900"
+  represents: spike
+  note: rows of cones form spikes on armor or creatures
+  reviewed: false
+- part: "59900"
+  represents: horn
+  note: a pair of cones on a head reads as horns
+  reviewed: false
+- part: "59900"
+  represents: thruster
+  note: mounted upside down under a ship as an engine nozzle
+  reviewed: false
+- part: "59900"
+  represents: traffic cone
+  note: an orange cone on a road reads as a traffic cone
+  reviewed: false
+
+# Tile 1 x 6 with Groove
+- part: "6636"
+  represents: plank
+  note: tan or brown 1x6 tiles in rows read as wooden planks or decking
+  reviewed: false
+
+# Brick Curved 2 x 2 x 2/3
+- part: "15068"
+  represents: pillow
+  note: a curved slope on a bed or sofa reads as a pillow or cushion
+  reviewed: false
+
+# Dish 2 x 2 Inverted [Radar]
+- part: "4740"
+  represents: hubcap
+  note: an inverted dish on a wheel or SNOT brick reads as a hubcap
+  reviewed: false
+- part: "4740"
+  represents: shield
+  note: mounted on a wall stud or a SNOT brick as a round shield
+  reviewed: false
+- part: "4740"
+  represents: lamp shade
+  note: on top of a bar or post it reads as a lamp shade
+  reviewed: false
+
+# Bar 4L (Lightsaber Blade / Wand)
+- part: "30374"
+  represents: antenna
+  note: clipped or held upright on a vehicle or building
+  reviewed: false
+- part: "30374"
+  represents: flagpole
+  note: held in a 1x1 round plate or brick with a flag clipped on
+  reviewed: false
+- part: "30374"
+  represents: railing
+  note: held between clips as a horizontal handrail
+  reviewed: false
+
+# Tile Round 1 x 1 Quarter
+- part: "25269"
+  represents: ear
+  note: a quarter round tile on a head reads as a rounded ear
+  reviewed: false
+- part: "25269"
+  represents: mosaic pixel
+  note: quarter round tiles give curved edges in a tile mosaic
+  reviewed: false
+
+# Technic Brick 1 x 1 with Pin Hole
+- part: "6541"
+  represents: porthole
+  note: the pin hole in a wall reads as a porthole or round window
+  reviewed: false
+
+# Tile Round 2 x 2 with Bottom Stud Holder
+- part: "14769"
+  represents: dinner plate
+  note: a white 2x2 round tile reads as a plate on a table
+  reviewed: false
+- part: "14769"
+  represents: table top
+  note: on top of a stack of round bricks it forms a small round table
+  reviewed: false
+
+# Brick Special 1 x 2 Palisade [aka Log]
+- part: "30136"
+  represents: tree trunk
+  note: brown palisade bricks give a bark texture to a trunk
+  reviewed: false
+
+# Plate Round 4 x 4 with Pin Hole
+- part: "60474"
+  represents: table top
+  note: on a central post it forms a round table
+  reviewed: false
+- part: "60474"
+  represents: wheel
+  note: turns on a pin through the center hole as a large wheel or turntable
+  reviewed: false
+
+# Bar 6L with Stop Ring
+- part: "63965"
+  represents: flagpole
+  note: held in a round brick or plate, with the stop ring at the top
+  reviewed: false
+
+# Bar 3L
+- part: "87994"
+  represents: antenna
+  note: clipped or held upright on a vehicle or building
+  reviewed: false
+- part: "87994"
+  represents: railing
+  note: held between clips as a short handrail
+  reviewed: false
+
+# Brick Special 1 x 2 with Grille
+- part: "2877"
+  represents: vent
+  note: a grille brick in a wall reads as a vent or air intake
+  reviewed: false
+- part: "2877"
+  represents: grille
+  note: a grille brick on a car front reads as a radiator grille
+  reviewed: false
+
+# Technic Pin Connector Round [Slotted]
+- part: "62462"
+  represents: pipe
+  note: joined end to end with pins as a thick pipe
+  reviewed: false
+
+# Brick Sloped 18° 2 x 1 x 2/3 with 4 Slots / Grate
+- part: "61409"
+  represents: vent
+  note: the slotted slope reads as a vent or air intake on vehicles
+  reviewed: false
+
+# Tile Special Round 2 x 2 with Hole
+- part: "15535"
+  represents: donut
+  note: a tan or pink round tile with a hole reads as a donut
+  reviewed: false
+
+# Tile Special 1 x 2 with Sloped Walls AKA Money / Gold Bar [Ingot]
+- part: "99563"
+  represents: bread
+  note: a tan ingot reads as a loaf of bread
+  reviewed: false
+- part: "99563"
+  represents: pillow
+  note: a white ingot on a bed reads as a pillow
+  reviewed: false
+
+# Weapon Lightsaber Hilt with Bottom Ring
+- part: "64567"
+  represents: lever
+  note: fitted into an open stud or a clip it reads as a control lever or gear stick
+  reviewed: false
+- part: "64567"
+  represents: pipe
+  note: joined to bars as a pipe fitting or nozzle
+  reviewed: false
+
+# Equipment Telescope / Torch / Spyglass, Support Round 1 x 1 x 1 2/3
+- part: "64644"
+  represents: exhaust pipe
+  note: the telescope on a vehicle reads as an exhaust pipe
+  reviewed: false
+- part: "64644"
+  represents: chimney
+  note: on a roof stud it reads as a chimney pot
+  reviewed: false
+
+# Animal Body Part, Barb / Claw / Tooth / Talon / Horn, Small
+- part: "53451"
+  represents: spike
+  note: rows of claws form spikes on armor, backs, or tails
+  reviewed: false
+- part: "53451"
+  represents: icicle
+  note: transparent clear claws hanging down read as icicles
+  reviewed: false
+- part: "53451"
+  represents: flame
+  note: transparent orange or yellow claws form flames
+  reviewed: false
+
+# Equipment Cup / Mug [Plain]
+- part: "3899"
+  represents: flower pot
+  note: a cup under a plant piece reads as a flower pot
+  reviewed: false
+- part: "3899"
+  represents: chimney
+  note: on a roof stud it reads as a chimney pot
+  reviewed: false
+
+# Plate Special 1 x 1 with Tooth
+- part: "49668"
+  represents: tooth
+  note: a white tooth plate in a creature's mouth
+  reviewed: false
+- part: "49668"
+  represents: claw
+  note: tooth plates at the end of a foot or hand read as claws
+  reviewed: false
+- part: "49668"
+  represents: spike
+  note: rows of tooth plates form spikes along a back or tail
+  reviewed: false
+
+# Cone 1 x 1 [No Top Groove]
+- part: "4589"
+  represents: nose
+  note: an orange cone on a snowman, or a cone on a creature's face
+  reviewed: false
+- part: "4589"
+  represents: spike
+  note: rows of cones form spikes on armor or creatures
+  reviewed: false
+
+# Headwear Accessory Visor For Standard Helmet
+- part: "2447"
+  represents: windscreen
+  note: a transparent visor on a speeder or bike reads as a windscreen
+  reviewed: false
+
+# Antenna 1 x 4 with Rounded Top
+- part: "3957a"
+  represents: flagpole
+  note: the base attaches on a stud and the thin upright shaft reads as a flagpole
+  reviewed: false
+
+# Antenna 1 x 4 with Flat Top
+- part: "3957b"
+  represents: flagpole
+  note: the base attaches on a stud and the thin upright shaft reads as a flagpole
+  reviewed: false
+
+# Rock 1 x 1 Jewel / Gem 24 Facet
+- part: "30153"
+  represents: eye
+  note: a jewel gives a glossy eye on creatures and robots
+  reviewed: false
+- part: "30153"
+  represents: light
+  note: a transparent jewel reads as a lamp or signal light
+  reviewed: false
+
+# Dish 3 x 3 Inverted [Radar]
+- part: "43898"
+  represents: shield
+  note: mounted on a wall stud or a SNOT brick as a round shield
+  reviewed: false
+- part: "43898"
+  represents: lamp shade
+  note: on top of a bar or post it reads as a lamp shade
+  reviewed: false
+
+# Cone 2 x 2 x 2, Open Stud
+- part: "3942c"
+  represents: nose cone
+  note: the tip of a rocket or missile
+  reviewed: false
+- part: "3942c"
+  represents: spire
+  note: on top of a round tower it reads as a pointed roof or spire
+  reviewed: false
+- part: "3942c"
+  represents: lamp shade
+  note: on top of a post it reads as a lamp shade
+  reviewed: false
+
+# Brick Round 2 x 2 [Grill]
+- part: "92947"
+  represents: column
+  note: stacked grille round bricks read as a fluted column
+  reviewed: false
+
+# Equipment Goblet / Glass
+- part: "2343"
+  represents: vase
+  note: a goblet on a table reads as a vase, often with a flower inside
+  reviewed: false
+
+# Equipment Binoculars
+- part: "30162"
+  represents: exhaust pipe
+  note: binoculars on a vehicle read as twin exhaust pipes or engines
+  reviewed: false
+
+# Pneumatic T-Piece (T Bar) [New Style]
+- part: "4697b"
+  represents: pipe
+  note: a T-junction where pneumatic hoses branch in a pipe run
+  reviewed: false
+
+# Flame / Headwear Accessory Plume / Feather, Triple Point
+- part: "64647"
+  represents: grass
+  note: green plumes on a stud read as a tuft of grass
+  reviewed: false
+- part: "64647"
+  represents: water splash
+  note: transparent clear or blue plumes read as a splash of water
+  reviewed: false
+
+# Plant, Carrot Top
+- part: "33183"
+  represents: grass
+  note: a green carrot top on a stud reads as a tuft of grass
+  reviewed: false
+
+# Brick 1 x 1 x 5 with Solid Stud
+- part: "2453b"
+  represents: column
+  note: a tall 1x1 brick reads as a square column or post
+  reviewed: false
+
+# Brick Round 2 x 2 Dome Top, Hollow Stud
+- part: "30367c"
+  represents: head
+  note: a dome on a round body reads as a robot or droid head
+  reviewed: false
+- part: "30367c"
+  represents: bush
+  note: a green dome reads as a round bush or shrub
+  reviewed: false
+
+# Tile Round 1 x 2 Half Circle
+- part: "1748"
+  represents: ear
+  note: a half circle tile on a head reads as a rounded ear
+  reviewed: false
+
+# Light Cover 1 x 1 Round with Internal Bar / Bionicle Barraki Eye
+- part: "58176"
+  represents: light
+  note: in a transparent color it reads as a lamp or signal light
+  reviewed: false
+
+# Dish 4 x 4 Inverted [Radar]
+- part: "3960"
+  represents: umbrella
+  note: on top of a bar it reads as an umbrella or parasol
+  reviewed: false
+- part: "3960"
+  represents: shield
+  note: held or mounted as a large round shield
+  reviewed: false
+
+# Technic Wedge Belt Wheel [aka Pulley]
+- part: "4185"
+  represents: wheel
+  note: turns on an axle as a small wheel
+  reviewed: false
+
+# Brick Round 2 x 2 Dome Bottom [Open Stud]
+- part: "15395"
+  represents: bowl
+  note: a dome bottom brick reads as a bowl or pot
+  reviewed: false
+
+# Brick Sloped 45° 1 x 1 x 2/3 Quadruple Convex [Pyramid]
+- part: "22388"
+  represents: spike
+  note: a pyramid slope on top of a post reads as a spike or finial
+  reviewed: false
+
+# Plate Special 1 x 1 with Vertical Tooth
+- part: "15070"
+  represents: tooth
+  note: a white vertical tooth plate in a creature's mouth
+  reviewed: false
+- part: "15070"
+  represents: claw
+  note: vertical tooth plates at the end of a foot or hand read as claws
+  reviewed: false
+
+# Tile Round 2 x 2 with Bottom Cross
+- part: "4150"
+  represents: dinner plate
+  note: a white 2x2 round tile reads as a plate on a table
+  reviewed: false
+
+# Brick Round 2 x 2 Truncated Cone
+- part: "98100"
+  represents: flower pot
+  note: a truncated cone under a plant reads as a flower pot
+  reviewed: false
+- part: "98100"
+  represents: lamp shade
+  note: on top of a post or round brick it reads as a lamp shade
+  reviewed: false
+
+# Plant, Banana
+- part: "33085"
+  represents: flower petal
+  note: arranged in a ring around a 1x1 round plate
+  reviewed: false
