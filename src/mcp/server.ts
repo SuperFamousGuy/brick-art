@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { CurrentDb } from '../db/open.ts';
-import { readState } from '../seed/lock.ts';
+import { isLockHeld, readState } from '../seed/lock.ts';
 import { dataPaths } from '../paths.ts';
 import { searchParts } from '../lookup/search-parts.ts';
 import { getPart } from '../lookup/get-part.ts';
@@ -75,7 +75,7 @@ const fail = (text: string): ToolResult => ({ isError: true, content: [{ type: '
 /** Builds the MCP server exposing the parts lookups over the database in dataDir. */
 export function createServer(dataDir: string): McpServer {
   const current = new CurrentDb(dataDir);
-  const statePath = dataPaths(dataDir).state;
+  const { state: statePath, lock: lockPath } = dataPaths(dataDir);
   const server = new McpServer({ name: 'brick-art-parts', version });
   server.server.onclose = () => current.close();
 
@@ -180,7 +180,7 @@ export function createServer(dataDir: string): McpServer {
     },
     (): ToolResult => {
       try {
-        return ok(databaseStatus(current.get(), readState(statePath)));
+        return ok(databaseStatus(current.get(), readState(statePath), isLockHeld(lockPath)));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

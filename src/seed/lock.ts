@@ -13,16 +13,32 @@ export interface SeedState {
 const code = (err: unknown): string | undefined => (err as NodeJS.ErrnoException).code;
 
 const FRESH_MS = 10_000;
+/** A seed takes minutes; a lock older than this is stale even if its pid is alive (the pid may be reused). */
+const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const LINK_UNSUPPORTED = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV', 'ENOSYS', 'EACCES']);
 
-/** True when the lock file names no live process. An unparsable lock is live while its mtime is under 10 s. */
+/** Lock content: `<pid> <ISO start time>`. Legacy content is the pid alone. */
+const lockContent = (): string => `${process.pid} ${new Date().toISOString()}`;
+
+function parseLock(text: string): { pid: number; startedMs: number | null } {
+  const [pidText = '', started] = text.trim().split(/\s+/);
+  const startedMs = started === undefined ? NaN : Date.parse(started);
+  return { pid: Number.parseInt(pidText, 10), startedMs: Number.isFinite(startedMs) ? startedMs : null };
+}
+
+/**
+ * True when the lock names no live process or is older than 2 hours.
+ * An unparsable lock is live while its mtime is under 10 s.
+ */
 function isStale(lockPath: string): boolean {
   let pid: number;
   try {
-    pid = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10);
+    const lock = parseLock(readFileSync(lockPath, 'utf8'));
+    pid = lock.pid;
     if (!Number.isInteger(pid) || pid <= 0) {
       return Date.now() - statSync(lockPath).mtimeMs >= FRESH_MS;
     }
+    if (lock.startedMs !== null && Date.now() - lock.startedMs >= MAX_AGE_MS) return true;
   } catch (err) {
     return code(err) === 'ENOENT';
   }
@@ -42,7 +58,7 @@ export function isLockHeld(lockPath: string): boolean {
 /** Creates the lock with complete content, or returns false when it is held. */
 function createLock(lockPath: string): boolean {
   const tmp = `${lockPath}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  writeFileSync(tmp, String(process.pid));
+  writeFileSync(tmp, lockContent());
   try {
     linkSync(tmp, lockPath);
     return true;
@@ -55,7 +71,7 @@ function createLock(lockPath: string): boolean {
   }
   // Filesystem without hard links: exclusive create instead.
   try {
-    writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+    writeFileSync(lockPath, lockContent(), { flag: 'wx' });
     return true;
   } catch (err) {
     if (code(err) === 'EEXIST') return false;
@@ -63,7 +79,7 @@ function createLock(lockPath: string): boolean {
   }
 }
 
-/** Creates the lock exclusively and writes this pid. Replaces a lock whose pid is dead. */
+/** Creates the lock exclusively and writes this pid and start time. Replaces a stale lock. */
 export function acquireLock(lockPath: string): boolean {
   mkdirSync(dirname(lockPath), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -91,7 +107,7 @@ export function acquireLock(lockPath: string): boolean {
 /** Removes the lock only when it still names this process. */
 export function releaseLock(lockPath: string): void {
   try {
-    if (Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10) !== process.pid) return;
+    if (parseLock(readFileSync(lockPath, 'utf8')).pid !== process.pid) return;
   } catch {
     return;
   }

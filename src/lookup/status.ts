@@ -12,12 +12,17 @@ export interface DatabaseStatus {
   warnings: string[];
 }
 
-/** Summarizes the seeded database and seed state. */
-export function databaseStatus(db: DatabaseSync | null, state: SeedState): DatabaseStatus {
+/**
+ * Summarizes the seeded database and seed state. The state is "seeding" only while the
+ * seed lock is held; a "seeding" state left by a crashed seed falls back to what exists.
+ */
+export function databaseStatus(db: DatabaseSync | null, state: SeedState, lockHeld: boolean): DatabaseStatus {
   const base = { lastError: state.lastError, warnings: [] as string[] };
+  const seeding = state.status === 'seeding' && lockHeld;
   if (db === null) {
+    const fallback = state.status !== 'seeding' ? state.status : state.lastError !== null ? 'failed' : 'idle';
     return {
-      ...base, state: state.status, seededAt: null, ldrawRelease: null, ldcadCommit: null,
+      ...base, state: seeding ? 'seeding' : fallback, seededAt: null, ldrawRelease: null, ldcadCommit: null,
       matchRateTop1000: null, counts: {},
     };
   }
@@ -33,7 +38,7 @@ export function databaseStatus(db: DatabaseSync | null, state: SeedState): Datab
   if (rate !== null && rate < 0.95) base.warnings.push('match rate below 95%');
   return {
     ...base,
-    state: state.status === 'seeding' ? 'seeding' : 'ready',
+    state: seeding ? 'seeding' : 'ready',
     seededAt: m.get('finished_at') ?? null,
     ldrawRelease: m.get('ldraw_release') ?? null,
     ldcadCommit: m.get('ldcad_commit') ?? null,

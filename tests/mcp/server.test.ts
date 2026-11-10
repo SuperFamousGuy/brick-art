@@ -10,6 +10,8 @@ import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import { COLOR_FAMILIES, createServer } from '../../src/mcp/server.ts';
+import { acquireLock, releaseLock, writeState } from '../../src/seed/lock.ts';
+import { dataPaths } from '../../src/paths.ts';
 import { TRAITS } from '../../src/derive/traits.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -127,4 +129,18 @@ test('colorFamily matches case-insensitively and filters pass through the tools'
 test('COLOR_FAMILIES lists the families in curated/color-families.yaml', () => {
   const doc = parse(readFileSync(join(repoRoot, 'curated', 'color-families.yaml'), 'utf8')) as { families: object };
   assert.deepEqual([...COLOR_FAMILIES].sort(), Object.keys(doc.families).sort());
+});
+
+test('database_status reports seeding only while the seed lock is held', async () => {
+  const dataDir = join(tmp, 'stale-seeding');
+  const paths = dataPaths(dataDir);
+  writeState(paths.state, { status: 'seeding', startedAt: 'x', finishedAt: null, lastError: null, failures: 0 });
+  const { client, close } = await connect(dataDir);
+  const status = async () =>
+    JSON.parse(textOf(await client.callTool({ name: 'database_status', arguments: {} }))).state as string;
+  assert.equal(await status(), 'idle');
+  assert.equal(acquireLock(paths.lock), true);
+  assert.equal(await status(), 'seeding');
+  releaseLock(paths.lock);
+  await close();
 });

@@ -105,14 +105,20 @@ test('listColors excludes placeholders and filters by part', () => {
 
 test('databaseStatus', () => {
   const failed: SeedState = { status: 'failed', startedAt: null, finishedAt: null, lastError: 'boom', failures: 1 };
-  const s = databaseStatus(null, failed);
+  const s = databaseStatus(null, failed, false);
   assert.equal(s.state, 'failed');
   assert.equal(s.lastError, 'boom');
   assert.equal(s.seededAt, null);
   const ready: SeedState = { status: 'ready', startedAt: null, finishedAt: null, lastError: null, failures: 0 };
-  const r = databaseStatus(db, ready);
+  const r = databaseStatus(db, ready, false);
   assert.equal(r.state, 'ready');
   assert.equal(r.counts.parts, 20);
   assert.equal(r.ldrawRelease, '2026-10');
-  assert.equal(databaseStatus(db, { ...ready, status: 'seeding' }).state, 'seeding');
+  const seeding: SeedState = { ...ready, status: 'seeding' };
+  assert.equal(databaseStatus(db, seeding, true).state, 'seeding');
+  // A seeding state without a held lock is a crashed seed: report what exists.
+  assert.equal(databaseStatus(db, seeding, false).state, 'ready');
+  assert.equal(databaseStatus(null, seeding, true).state, 'seeding');
+  assert.equal(databaseStatus(null, seeding, false).state, 'idle');
+  assert.equal(databaseStatus(null, { ...seeding, lastError: 'boom' }, false).state, 'failed');
 });

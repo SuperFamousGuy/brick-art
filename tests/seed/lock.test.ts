@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireLock, readState, releaseLock, writeState } from '../../src/seed/lock.ts';
+import { acquireLock, isLockHeld, readState, releaseLock, writeState } from '../../src/seed/lock.ts';
 
 async function tmp(t: { after: (fn: () => Promise<void>) => void }) {
   const dir = await mkdtemp(join(tmpdir(), 'brick-art-lock-'));
@@ -15,7 +15,6 @@ async function tmp(t: { after: (fn: () => Promise<void>) => void }) {
 test('acquireLock twice in one process: second returns false', async (t) => {
   const lock = join(await tmp(t), 'seed.lock');
   assert.equal(acquireLock(lock), true);
-  assert.equal(await readFile(lock, 'utf8'), String(process.pid));
   assert.equal(acquireLock(lock), false);
   releaseLock(lock);
   assert.equal(existsSync(lock), false);
@@ -27,7 +26,7 @@ test('a lock held by a dead pid is replaced', async (t) => {
   const lock = join(await tmp(t), 'seed.lock');
   await writeFile(lock, '999999');
   assert.equal(acquireLock(lock), true);
-  assert.equal(await readFile(lock, 'utf8'), String(process.pid));
+  assert.match(await readFile(lock, 'utf8'), new RegExp(`^${process.pid} \\d{4}-\\d{2}-\\d{2}T`));
 });
 
 test('an unparsable lock with an old mtime is stale', async (t) => {
@@ -74,4 +73,32 @@ test('readState defaults to idle, and writeState round-trips', async (t) => {
   assert.deepEqual(readState(p), s);
   await writeFile(p, '{not json');
   assert.equal(readState(p).status, 'idle');
+});
+
+test('the lock stores pid and start time; a fresh lock of a live pid is held', async (t) => {
+  const lock = join(await tmp(t), 'seed.lock');
+  assert.equal(acquireLock(lock), true);
+  const [pid, started] = (await readFile(lock, 'utf8')).split(' ');
+  assert.equal(pid, String(process.pid));
+  assert.ok(Math.abs(Date.parse(started!) - Date.now()) < 60_000);
+  assert.equal(isLockHeld(lock), true);
+  releaseLock(lock);
+  assert.equal(existsSync(lock), false);
+});
+
+test('a lock older than 2 hours is stale even when its pid is alive', async (t) => {
+  const lock = join(await tmp(t), 'seed.lock');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000 - 1000).toISOString();
+  await writeFile(lock, `${process.pid} ${old}`);
+  assert.equal(isLockHeld(lock), false);
+  assert.equal(acquireLock(lock), true);
+  releaseLock(lock);
+});
+
+test('legacy pid-only content still parses', async (t) => {
+  const lock = join(await tmp(t), 'seed.lock');
+  await writeFile(lock, String(process.pid));
+  assert.equal(isLockHeld(lock), true);
+  await writeFile(lock, '999999');
+  assert.equal(isLockHeld(lock), false);
 });
