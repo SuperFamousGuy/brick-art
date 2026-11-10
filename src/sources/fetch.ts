@@ -48,7 +48,7 @@ export interface FetchOptions {
 
 const REBRICKABLE_TABLES = [
   'parts', 'part_categories', 'part_relationships', 'colors',
-  'elements', 'inventory_parts', 'inventories', 'sets',
+  'elements', 'inventory_parts', 'inventories', 'sets', 'themes', 'inventory_minifigs', 'minifigs',
 ];
 const USER_AGENT = 'brick-art-seed';
 

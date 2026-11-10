@@ -228,6 +228,9 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
       [1, 1, 'S1-1'], [2, 1, 'S2-1'], [3, 1, 'S3-1'], [4, 1, 'S4-1'], [5, 2, 'S3-1'],
       [6, 1, 'fig-000001'],
     ]),
+    themes: toCsv(['id', 'name', 'parent_id'], [[1, 'Harbor', 2], [2, 'Town', '']]),
+    inventory_minifigs: toCsv(['inventory_id', 'fig_num', 'quantity'], [[1, 'fig-000001', 2]]),
+    minifigs: toCsv(['fig_num', 'name', 'num_parts', 'img_url'], [['fig-000001', 'Fixture Fig', 1, '']]),
     inventory_parts: toCsv(
       ['inventory_id', 'part_num', 'color_id', 'quantity', 'is_spare', 'img_url'],
       inventoryRows(),
@@ -252,7 +255,8 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
 
 const SOURCE_NAMES = [
   'parts', 'part_categories', 'part_relationships', 'colors', 'elements',
-  'inventory_parts', 'inventories', 'sets', 'ldraw', 'ldcad',
+  'inventory_parts', 'inventories', 'sets', 'themes', 'inventory_minifigs', 'minifigs',
+  'ldraw', 'ldcad',
 ];
 
 /** Prebuilt `FetchedSources` pointing at the fixture trees, with synthetic source records. */

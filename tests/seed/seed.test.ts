@@ -75,7 +75,7 @@ test('runSeed builds the database from fixture sources', async (t) => {
   assert.equal(none.is_complete, 0);
 
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
-  assert.equal(count('SELECT count(*) AS n FROM sources'), 10);
+  assert.equal(count('SELECT count(*) AS n FROM sources'), 13);
   assert.equal(count('SELECT count(*) AS n FROM colors'), 7);
   assert.equal(count('SELECT count(*) AS n FROM colors WHERE is_placeholder = 1'), 2);
   assert.equal(
