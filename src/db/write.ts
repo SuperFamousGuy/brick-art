@@ -30,6 +30,8 @@ export interface PartRow {
   isComplete: boolean;
   isPrint: boolean;
   basePartNum: string | null;
+  /** False for parts of a non-System product line such as Duplo or Modulex. */
+  isSystem: boolean;
 }
 export interface ConnectionRow extends ConnectionPoint { partNum: string }
 export interface TraitRow { partNum: string; trait: string }
@@ -69,7 +71,7 @@ const PART_COLUMNS = [
   'part_num', 'name', 'category_id', 'category_name', 'ldraw_file', 'geometry_from',
   'width_studs', 'depth_studs', 'height_plates', 'min_x', 'min_y', 'min_z', 'max_x', 'max_y', 'max_z',
   'grid', 'slope_angle', 'basic_kind', 'set_count', 'first_year', 'last_year', 'license',
-  'has_geometry', 'has_connections', 'has_grid', 'is_complete', 'is_print', 'base_part_num',
+  'has_geometry', 'has_connections', 'has_grid', 'is_complete', 'is_print', 'base_part_num', 'is_system',
 ];
 
 export function writeParts(db: DatabaseSync, rows: readonly PartRow[]): void {
@@ -78,7 +80,7 @@ export function writeParts(db: DatabaseSync, rows: readonly PartRow[]): void {
     r.widthStuds, r.depthStuds, r.heightPlates, r.minX, r.minY, r.minZ, r.maxX, r.maxY, r.maxZ,
     r.grid === null ? null : JSON.stringify(r.grid), r.slopeAngle, r.basicKind, r.setCount, r.firstYear, r.lastYear,
     r.license, bit(r.hasGeometry), bit(r.hasConnections), bit(r.hasGrid), bit(r.isComplete), bit(r.isPrint),
-    r.basePartNum,
+    r.basePartNum, bit(r.isSystem),
   ]);
 }
 

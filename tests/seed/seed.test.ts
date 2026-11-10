@@ -34,7 +34,7 @@ test('runSeed builds the database from fixture sources', async (t) => {
   const result = await runSeed({ dataDir: s.dataDir, repoRoot, refresh: false, sources: s.sources, now });
   assert.equal(result.dbFile, join(s.dataDir, 'parts-20261109T123456.db'));
   assert.equal(readPointer(s.dataDir), 'parts-20261109T123456.db');
-  assert.equal(result.counts.parts, 19);
+  assert.equal(result.counts.parts, 20);
   const state = readState(dataPaths(s.dataDir).state);
   assert.equal(state.status, 'ready');
   assert.equal(state.failures, 0);
@@ -45,10 +45,10 @@ test('runSeed builds the database from fixture sources', async (t) => {
   const manifest = Object.fromEntries(
     (db.prepare('SELECT key, value FROM manifest').all() as { key: string; value: string }[]).map((r) => [r.key, r.value]),
   );
-  assert.equal(manifest.count_parts, '19');
+  assert.equal(manifest.count_parts, '20');
   assert.equal(manifest.ldraw_release, '2026-10');
   assert.equal(manifest.ldcad_commit, 'abc123');
-  assert.equal(manifest.seed_version, '1');
+  assert.equal(manifest.seed_version, '2');
   for (const k of ['curated_hash', 'started_at', 'finished_at', 'match_rate_top1000',
     'count_with_connections', 'count_incomplete', 'count_creative_loaded', 'count_creative_rejected']) {
     assert.ok(k in manifest, k);
@@ -62,6 +62,8 @@ test('runSeed builds the database from fixture sources', async (t) => {
   assert.equal((db.prepare("SELECT count(*) AS n FROM connections WHERE part_num = '3001'").get() as { n: number }).n, 16);
   const pr = part('3001pr0001');
   assert.equal(pr.is_print, 1);
+  assert.equal(p.is_system, 1);
+  assert.equal(part('3437').is_system, 0);
   assert.equal(pr.base_part_num, '3001');
   assert.equal(part('99999').is_complete, 0);
   const alt = part('3009b');

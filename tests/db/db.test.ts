@@ -35,7 +35,7 @@ const part = (n: string, over: Partial<PartRow> = {}): PartRow => ({
   minX: -40, minY: -24, minZ: -20, maxX: 40, maxY: 0, maxZ: 20, grid: [[[1]]], slopeAngle: null,
   basicKind: 'brick', setCount: 10, firstYear: 1970, lastYear: 2024, license: 'CC BY 4.0',
   hasGeometry: true, hasConnections: true, hasGrid: true, isComplete: true, isPrint: false,
-  basePartNum: null, ...over,
+  basePartNum: null, isSystem: true, ...over,
 });
 
 test('createSchema creates all 10 tables and symmetric compat rows', () => {
@@ -51,7 +51,7 @@ test('createSchema creates all 10 tables and symmetric compat rows', () => {
   assert.ok(has('stud', 'stud_receptor') && has('stud_receptor', 'stud'));
   assert.ok(has('axle', 'pin_hole') && has('pin_hole', 'axle'));
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM connection_compat').get() as { n: number }).n, 16);
-  assert.equal(SEED_VERSION, 1);
+  assert.equal(SEED_VERSION, 2);
   db.close();
 });
 

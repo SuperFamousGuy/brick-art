@@ -9,6 +9,7 @@ import { loadRebrickable, type RebrickableData } from '../../src/sources/rebrick
 import { matchParts, matchRateTop } from '../../src/derive/match.ts';
 import { computeAvailability } from '../../src/derive/availability.ts';
 import { deriveTraits } from '../../src/derive/traits.ts';
+import { isSystemPart } from '../../src/derive/system.ts';
 import { writeFixtureSources } from '../helpers/fixtures.ts';
 
 let dir: string;
@@ -93,4 +94,20 @@ test('deriveTraits reads slope angles from live Rebrickable names', () => {
     connections: [], colorsTrans: [],
   });
   assert.ok(plural.traits.includes('slope'));
+});
+
+test('isSystemPart flags non-System product lines by category and name', () => {
+  const cases: [string, string, boolean][] = [
+    ['Duplo Brick 2 x 2', 'Duplo, Quatro and Primo', false],
+    ['Modulex Slope 1 x 1 (45 Degree, 1:1 Slope)', 'Modulex', false],
+    ['Belville Wall 6 x 8 x 12 - Tower with Window', 'Panels', false],
+    ['Storage, Duplo, Brick Mixer Truck', 'Gear Parts', false],
+    ['Equipment Shovel [Fabuland]', 'Minifig Accessories', false],
+    ['Wheel 32mm Znap Propeller', 'Wheels and Tyres', false],
+    ['Felt Heart Small with Square Hole', 'Non-System Parts', false],
+    ['Brick 2 x 4', 'Bricks', true],
+    ['Tile 2 x 2 with Fabuland Raccoon Print', 'Tiles', true],
+    ['Minifig Head Yesi Scala, Black Eyebrows', 'Minifig Heads', true],
+  ];
+  for (const [name, category, expected] of cases) assert.equal(isSystemPart(name, category), expected, name);
 });

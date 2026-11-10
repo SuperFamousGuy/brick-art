@@ -12,6 +12,7 @@ import {
 import type { ConnectionRow, PartColorRow, PartRow, TraitRow } from '../db/write.ts';
 import { computeAvailability } from '../derive/availability.ts';
 import { matchParts, matchRateTop } from '../derive/match.ts';
+import { isSystemPart } from '../derive/system.ts';
 import { deriveTraits } from '../derive/traits.ts';
 import { LDrawLibrary } from '../ldraw/library.ts';
 import { resolvePart } from '../ldraw/resolve.ts';
@@ -131,9 +132,9 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     const baseRow = (p: RbPart): PartRow => {
       const a = avail.parts.get(p.partNum);
       const parent = printParent.get(p.partNum);
+      const categoryName = rb.categories.get(p.categoryId) ?? null;
       return {
-        partNum: p.partNum, name: p.name, categoryId: p.categoryId,
-        categoryName: rb.categories.get(p.categoryId) ?? null,
+        partNum: p.partNum, name: p.name, categoryId: p.categoryId, categoryName,
         ldrawFile: null, geometryFrom: null,
         widthStuds: null, depthStuds: null, heightPlates: null,
         minX: null, minY: null, minZ: null, maxX: null, maxY: null, maxZ: null,
@@ -141,6 +142,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
         setCount: a?.setCount ?? 0, firstYear: a?.firstYear ?? null, lastYear: a?.lastYear ?? null,
         license: null, hasGeometry: false, hasConnections: false, hasGrid: false, isComplete: false,
         isPrint: parent !== undefined, basePartNum: parent ?? null,
+        isSystem: isSystemPart(p.name, categoryName ?? ''),
       };
     };
     const traitsFor = (p: RbPart, row: PartRow, connections: ConnectionRow[]) => {

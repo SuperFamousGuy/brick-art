@@ -45,6 +45,7 @@ const PARTS: [string, string, number][] = [
   ['3009b', 'Brick 1 x 6 Alternate Mold', 11],
   ['99999', 'Broken Part', 11],
   ['003383', 'Sticker Sheet for Sets 618-1, 628-2', 58],
+  ['3437', 'Duplo Brick 2 x 2', 4],
 ];
 
 const BLACK = 0;
@@ -152,6 +153,8 @@ function ldrawFixtures(): Map<string, string> {
   for (const num of ['60478', '15712', '3937', '3938']) {
     part(num, `Fixture Part ${num}`, box(-10, 0, -10, 10, 8, 10));
   }
+  part('3437', 'Duplo Brick  2 x  2',
+    [...hollow(-20, 0, -20, 20, 24, 20), ...[-10, 10].flatMap((x) => [studRef(x, -10), studRef(x, 10)])]);
   part('99999', 'Broken Part', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\missing.dat']);
   return f;
 }
@@ -203,7 +206,7 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
     part_categories: toCsv(['id', 'name'], [
       [11, 'Bricks'], [14, 'Plates'], [3, 'Bricks Sloped'], [19, 'Tiles Special'],
       [5, 'Bricks Special'], [18, 'Hinges Arms and Turntables'],
-      [27, 'Minifig Accessories'], [58, 'Stickers'],
+      [27, 'Minifig Accessories'], [58, 'Stickers'], [4, 'Duplo, Quatro and Primo'],
     ]),
     parts: toCsv(['part_num', 'name', 'part_cat_id', 'part_material'],
       PARTS.map(([num, name, cat]) => [num, name, cat, 'Plastic'])),

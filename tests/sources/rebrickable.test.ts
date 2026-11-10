@@ -12,7 +12,7 @@ test('loadRebrickable loads typed data from the fixtures', async (t) => {
   const { rebrickableDir } = await writeFixtureSources(dir);
   const data = await loadRebrickable(rebrickableDir);
 
-  assert.equal(data.parts.length, 19);
+  assert.equal(data.parts.length, 20);
   assert.equal(
     data.parts.find((p) => p.partNum === '003383')?.name,
     'Sticker Sheet for Sets 618-1, 628-2',

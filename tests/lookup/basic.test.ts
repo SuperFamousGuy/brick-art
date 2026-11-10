@@ -72,6 +72,8 @@ test('searchParts include flags, nameContains, and limit', () => {
   assert.ok(nums(searchParts(db, { nameContains: 'SLOPE' })).includes('3039'));
   assert.deepEqual(searchParts(db, { nameContains: '%' }), []);
   assert.equal(searchParts(db, { limit: 2 }).length, 2);
+  assert.ok(!nums(searchParts(db, { width: 2, depth: 2 })).includes('3437'));
+  assert.ok(nums(searchParts(db, { width: 2, depth: 2, includeNonSystem: true })).includes('3437'));
   assert.equal(clampLimit(), 25);
   assert.equal(clampLimit(9999), 200);
   assert.equal(clampLimit(0), 1);
@@ -110,7 +112,7 @@ test('databaseStatus', () => {
   const ready: SeedState = { status: 'ready', startedAt: null, finishedAt: null, lastError: null, failures: 0 };
   const r = databaseStatus(db, ready);
   assert.equal(r.state, 'ready');
-  assert.equal(r.counts.parts, 19);
+  assert.equal(r.counts.parts, 20);
   assert.equal(r.ldrawRelease, '2026-10');
   assert.equal(databaseStatus(db, { ...ready, status: 'seeding' }).state, 'seeding');
 });

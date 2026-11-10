@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2;
 
 // Pairs are listed once; createSchema stores both directions.
 const COMPAT_PAIRS: [string, string][] = [
@@ -27,7 +27,7 @@ CREATE TABLE parts (
   grid TEXT, slope_angle REAL, basic_kind TEXT,
   set_count INTEGER, first_year INTEGER, last_year INTEGER, license TEXT,
   has_geometry INTEGER, has_connections INTEGER, has_grid INTEGER,
-  is_complete INTEGER, is_print INTEGER, base_part_num TEXT
+  is_complete INTEGER, is_print INTEGER, base_part_num TEXT, is_system INTEGER
 );
 CREATE TABLE part_traits (part_num TEXT, trait TEXT, PRIMARY KEY (part_num, trait));
 CREATE TABLE connections (

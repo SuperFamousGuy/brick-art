@@ -27,6 +27,8 @@ export interface PartFilter {
   nameContains?: string;
   includeIncomplete?: boolean;
   includePrints?: boolean;
+  /** Include parts of non-System lines such as Duplo, Modulex, and Fabuland. */
+  includeNonSystem?: boolean;
 }
 
 export const ORDER_BY = 'p.set_count DESC, p.last_year DESC, p.part_num ASC';
@@ -57,6 +59,7 @@ export function buildPartWhere(f: PartFilter): { sql: string; params: (string | 
 
   if (!f.includeIncomplete) where.push('p.is_complete = 1');
   if (!f.includePrints) where.push('p.is_print = 0');
+  if (!f.includeNonSystem) where.push('p.is_system = 1');
   if (f.category !== undefined) {
     where.push('LOWER(p.category_name) = LOWER(?)');
     params.push(f.category);

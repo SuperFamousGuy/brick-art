@@ -46,7 +46,7 @@ test('seeded db is ok and does not spawn', async (t) => {
   assert.deepEqual(await needsSeed(s.dataDir, repoRoot), { needed: false, reason: 'ok' });
   const line = await bootstrap(s.dataDir, repoRoot, c.spawn);
   assert.equal(c.calls, 0);
-  assert.match(line, /^brick-art: parts database ready \(19 parts, seeded \d{4}-\d{2}-\d{2}T[^)]*\)\.$/);
+  assert.match(line, /^brick-art: parts database ready \(20 parts, seeded \d{4}-\d{2}-\d{2}T[^)]*\)\.$/);
 });
 
 test('edited curated file gives curated and spawns', async (t) => {
