@@ -1,0 +1,23 @@
+# Curated creative part uses: parts that builders commonly use for something
+# other than their original purpose. Every entry starts as reviewed: false and
+# is shown to users only as a "suggestion" until a person reviews it.
+- part: "33085"
+  represents: flower petal
+  note: arranged in a ring around a 1x1 round plate
+  reviewed: false
+- part: "30374"
+  represents: sword blade
+  note: the bar 4L piece also works as a lightsaber blade
+  reviewed: false
+- part: "4073"
+  represents: eye
+  note: a 1x1 round plate, often in white or black
+  reviewed: false
+- part: "3941"
+  represents: barrel
+  note: a 2x2 round brick
+  reviewed: false
+- part: "3024"
+  represents: mosaic pixel
+  note: 1x1 plates side by side on a baseplate form a pixel image
+  reviewed: false
