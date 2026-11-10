@@ -402,10 +402,21 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   let skippedLicense = 0;
   let omrFilesFailed = 0;
 
+  // The maps are needed by OMR and every fan source, so a failure here fails all of them.
+  let maps: Maps | null = null;
   if (variant !== 'fallback') {
-    const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
-    colorRate = colors.rate;
-    const maps: Maps = { parts: buildPartMap(input.partMapInput), colors: colors.map };
+    try {
+      const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
+      if (colors.map.size === 0) throw new Error('LDConfig.ldr maps no colors');
+      colorRate = colors.rate;
+      maps = { parts: buildPartMap(input.partMapInput), colors: colors.map };
+    } catch (err) {
+      failedSources.push('omr');
+      if (variant === 'full') failedSources.push(...input.fanSources.map((src) => src.id));
+      log(`project maps failed: ${errText(err)}`);
+    }
+  }
+  if (maps !== null) {
 
     const firstProject = nextProjectId;
     const lastSubmodel = lastSubmodelId;
@@ -430,7 +441,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
           const parsed = parseModel(readFileSync(f.path, 'utf8'), f.fileName);
           const top = parsed.files.get(parsed.main);
           if (!top) throw new Error('no model in file');
-          if (!licenseAllowed(top.license)) {
+          // Sub-files without a license line inherit the top-level one; an explicit disallowed line excludes the model.
+          if (!licenseAllowed(top.license) ||
+            [...parsed.files.values()].some((m) => m.license !== null && !licenseAllowed(m.license))) {
             skippedLicense++;
             continue;
           }

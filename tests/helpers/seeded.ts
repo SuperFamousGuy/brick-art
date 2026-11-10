@@ -50,11 +50,12 @@ function fanPages(): Map<string, FakeReply> {
 
 /**
  * Seeds a database from fixture sources in `dir` for `variant`. A fake server provides OMR
- * (`omrPages()` unless `omr` replaces those pages) and, for `full`, a fixture fan source that
- * replaces the repo's curated fan sources. Call `close()` to stop the server; `dir` is the caller's.
+ * (`omrPages()` unless `omr` replaces those pages) and, for `full`, the fan sources in `fanYaml`
+ * (default `FAN_SOURCES_YAML`, served by the same server), which replace the repo's curated ones.
+ * Call `close()` to stop the server; `dir` is the caller's.
  */
 export async function seedFixture(
-  dir: string, variant: Variant, omr?: Map<string, FakeReply>,
+  dir: string, variant: Variant, omr?: Map<string, FakeReply>, fanYaml = FAN_SOURCES_YAML,
 ): Promise<{ dataDir: string; dbFile: string; close(): Promise<void> }> {
   const fx = await writeFixtureSources(join(dir, 'fx'));
   const pages = new Map<string, FakeReply>([...(omr ?? omrPages()), ...fanPages()]);
@@ -64,7 +65,7 @@ export async function seedFixture(
     if (variant === 'full') {
       repoRoot = join(dir, 'repo');
       await cp(join(REPO_ROOT, 'curated'), join(repoRoot, 'curated'), { recursive: true });
-      await writeFile(join(repoRoot, 'curated', 'fan-sources.yaml'), FAN_SOURCES_YAML);
+      await writeFile(join(repoRoot, 'curated', 'fan-sources.yaml'), fanYaml);
     }
     const dataDir = join(dir, 'data');
     const result = await runSeed({

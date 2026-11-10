@@ -11,9 +11,9 @@ import { dataPaths } from '../../src/paths.ts';
 import { readPointer } from '../../src/db/open.ts';
 import type { Variant } from '../../src/projects/types.ts';
 import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
-import { MPD_BMODEL } from '../helpers/models.ts';
+import { MPD_10001_MINI, MPD_BMODEL } from '../helpers/models.ts';
 import type { FakeReply } from '../helpers/models.ts';
-import { omrPages, seedFixture } from '../helpers/seeded.ts';
+import { FAN_SOURCES_YAML, omrPages, seedFixture } from '../helpers/seeded.ts';
 
 type T = { after: (fn: () => Promise<void>) => void };
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -157,10 +157,10 @@ test('runSeed returns without work when another seed holds the lock', async (t) 
 
 // ---- variants and project stages -----------------------------------------
 
-async function seeded(t: T, variant: Variant, omr?: Map<string, FakeReply>) {
+async function seeded(t: T, variant: Variant, omr?: Map<string, FakeReply>, fanYaml?: string) {
   const dir = await mkdtemp(join(tmpdir(), 'brick-art-seeded-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const s = await seedFixture(dir, variant, omr);
+  const s = await seedFixture(dir, variant, omr, fanYaml);
   t.after(() => s.close());
   const db = new DatabaseSync(s.dbFile, { readOnly: true });
   t.after(async () => db.close());
@@ -281,4 +281,74 @@ test('a part whose license is not redistributable loses its geometry', async (t)
   assert.equal(p.license, 'Not redistributable : see NonCAreadme.txt');
   assert.equal((db.prepare("SELECT count(*) AS n FROM connections WHERE part_num = '33085'").get() as { n: number }).n, 0);
   assert.equal((db.prepare("SELECT is_complete AS c FROM parts WHERE part_num = '3001'").get() as { c: number }).c, 1);
+});
+
+test('a sub-file with a disallowed license excludes the OMR model', async (t) => {
+  const pages = omrPages();
+  const lines = MPD_10001_MINI.split('\n');
+  const cab = lines.indexOf('0 Author: Cab Builder');
+  lines[cab + 1] = '0 !LICENSE Not redistributable : see NonCAreadme.txt';
+  pages.set('/media/omr_models/1/S1-1.mpd', lines.join('\n'));
+  const s = await seeded(t, 'standard', pages);
+  assert.equal(s.manifest.count_models_skipped_license, '2');
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 0);
+  assert.equal(s.count('SELECT count(*) AS n FROM placements'), 0);
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source_key = 'S1-1' AND has_positions = 1"), 0);
+  assert.equal(s.manifest.failed_sources, '');
+});
+
+test('a sub-file without a license line inherits the top-level license', async (t) => {
+  const pages = omrPages();
+  pages.set('/media/omr_models/1/S1-1.mpd', MPD_10001_MINI.split('\n')
+    .filter((l, i, all) => !(l.startsWith('0 !LICENSE') && all[i - 1] === '0 Author: Cab Builder')).join('\n'));
+  const s = await seeded(t, 'standard', pages);
+  assert.equal(s.manifest.count_models_skipped_license, '1');
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 2);
+});
+
+for (const variant of ['standard', 'full'] as const) {
+  test(`a missing LDConfig.ldr fails the ${variant} project sources, not the seed`, async (t) => {
+    const s = await setup(t);
+    const ldrawRoot = join(s.dir, 'ldraw-copy');
+    await cp(s.fx.ldrawRoot, ldrawRoot, { recursive: true });
+    await rm(join(ldrawRoot, 'LDConfig.ldr'));
+    const r = await runSeed({
+      dataDir: s.dataDir, repoRoot, refresh: false, sources: { ...s.sources, ldrawRoot }, variant, omr: { files: [] },
+      fanFetch: { githubApi: 'http://127.0.0.1:9', codeload: 'http://127.0.0.1:9' },
+    });
+    const db = new DatabaseSync(r.dbFile, { readOnly: true });
+    t.after(async () => db.close());
+    const m = Object.fromEntries(
+      (db.prepare('SELECT key, value FROM manifest').all() as { key: string; value: string }[]).map((x) => [x.key, x.value]),
+    );
+    assert.equal(m.failed_sources, variant === 'full' ? 'omr,datsville' : 'omr');
+    assert.equal(m.count_parts, '20');
+    assert.equal(m.color_match_rate, '');
+    assert.equal(m.count_projects_official, '4');
+  });
+}
+
+test('a fallback seed does not need LDConfig.ldr', async (t) => {
+  const s = await setup(t);
+  const ldrawRoot = join(s.dir, 'ldraw-copy');
+  await cp(s.fx.ldrawRoot, ldrawRoot, { recursive: true });
+  await rm(join(ldrawRoot, 'LDConfig.ldr'));
+  const r = await runSeed({ dataDir: s.dataDir, repoRoot, refresh: false, sources: { ...s.sources, ldrawRoot } });
+  const db = new DatabaseSync(r.dbFile, { readOnly: true });
+  t.after(async () => db.close());
+  const m = db.prepare("SELECT value FROM manifest WHERE key = 'failed_sources'").get() as { value: string };
+  assert.equal(m.value, '');
+});
+
+test('one failing fan source keeps OMR and the other fan sources', async (t) => {
+  const broken = FAN_SOURCES_YAML.replace('fixture_fan', 'broken_fan').replace('fan/town', 'fan/missing');
+  const s = await seeded(t, 'full', undefined, FAN_SOURCES_YAML + broken);
+  assert.equal(s.manifest.failed_sources, 'broken_fan');
+  assert.equal(s.manifest.count_projects_fan, '1');
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source = 'broken_fan'"), 0);
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source = 'fixture_fan'"), 1);
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source_key = 'S1-1' AND has_positions = 1"), 1);
+  // OMR main (2) plus the fan model (2).
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 4);
+  assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /fan broken_fan failed/);
 });
