@@ -48,7 +48,7 @@ function inRange(col: string, r: Range, params: (string | number)[]): string {
   return `${col} BETWEEN ? AND ?`;
 }
 
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** WHERE clause for the filter against `parts` aliased as `p`. Parameterized. */
 export function buildPartWhere(f: PartFilter): { sql: string; params: (string | number)[] } {
