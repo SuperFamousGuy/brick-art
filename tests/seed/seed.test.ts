@@ -117,6 +117,28 @@ test('a failed seed keeps the previous db and pointer and records the failure', 
   assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /ENOENT/);
 });
 
+test('a failure after the schema exists removes the new db and keeps the old one', async (t) => {
+  const s = await setup(t);
+  await runSeed({
+    dataDir: s.dataDir, repoRoot, refresh: false, sources: s.sources, now: () => new Date('2026-11-09T01:00:00Z'),
+  });
+  // An unbindable value makes writeSources throw after the new db has been created and filled.
+  const records = s.sources.records.map((r, i) => (i === 0 ? { ...r, bytes: {} as unknown as number } : r));
+  await assert.rejects(
+    runSeed({
+      dataDir: s.dataDir, repoRoot, refresh: false, sources: { ...s.sources, records },
+      now: () => new Date('2026-11-09T02:00:00Z'),
+    }),
+  );
+  assert.deepEqual(await dbFiles(s.dataDir), ['parts-20261109T010000.db']);
+  assert.equal(readPointer(s.dataDir), 'parts-20261109T010000.db');
+  const state = readState(dataPaths(s.dataDir).state);
+  assert.equal(state.status, 'failed');
+  assert.equal(state.failures, 1);
+  assert.equal(existsSync(dataPaths(s.dataDir).lock), false);
+  assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /seed failed/);
+});
+
 test('runSeed returns without work when another seed holds the lock', async (t) => {
   const s = await setup(t);
   await mkdir(s.dataDir, { recursive: true });

@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { curatedDir, loadCurated, validateUses } from '../curated/load.ts';
 import type { CreativeUse } from '../curated/load.ts';
 import { SEED_VERSION, createSchema } from '../db/schema.ts';
@@ -65,11 +65,12 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   }
 
   const startedAt = now().toISOString();
-  const prior = readState(paths.state);
-  writeState(paths.state, { status: 'seeding', startedAt, finishedAt: null, lastError: null, failures: prior.failures });
+  let prior = readState(paths.state);
   let dbFile: string | null = null;
   let db: DatabaseSync | null = null;
   try {
+    prior = readState(paths.state);
+    writeState(paths.state, { status: 'seeding', startedAt, finishedAt: null, lastError: null, failures: prior.failures });
     log('seed start');
     dbFile = uniqueDbFile(opts.dataDir, now());
 
@@ -248,18 +249,19 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     log('database written');
 
     writePointer(opts.dataDir, basename(dbFile));
-    for (const name of readdirSync(opts.dataDir)) {
-      if (/^parts-.*\.db$/.test(name) && name !== basename(dbFile)) {
+    // The new database is live from here on: nothing below may fail the seed.
+    try {
+      for (const name of readdirSync(opts.dataDir)) {
+        if (!/^parts-.*\.db$/.test(name) || name === basename(dbFile)) continue;
         try {
-          rmSync(`${opts.dataDir}/${name}`, { force: true });
+          rmSync(join(opts.dataDir, name), { force: true });
         } catch (err) {
-          const c = (err as NodeJS.ErrnoException).code;
-          if (c !== 'EBUSY' && c !== 'EPERM') throw err;
+          log(`could not remove old database ${name}: ${(err as NodeJS.ErrnoException).code ?? err}`);
         }
       }
-    }
-    writeState(paths.state, { status: 'ready', startedAt, finishedAt, lastError: null, failures: 0 });
-    log(`seed done: ${basename(dbFile)}`);
+      writeState(paths.state, { status: 'ready', startedAt, finishedAt, lastError: null, failures: 0 });
+      log(`seed done: ${basename(dbFile)}`);
+    } catch { /* best effort */ }
     return {
       dbFile,
       counts: {
@@ -272,20 +274,25 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
       },
     };
   } catch (err) {
-    try { db?.close(); } catch { /* already closed */ }
-    if (dbFile !== null && dbFile !== readPointerPath(opts.dataDir)) rmSync(dbFile, { force: true });
     const message = err instanceof Error ? err.message : String(err);
-    log(`seed failed: ${err instanceof Error ? (err.stack ?? message) : message}`);
-    writeState(paths.state, {
-      status: 'failed', startedAt, finishedAt: now().toISOString(), lastError: message, failures: prior.failures + 1,
-    });
+    // Cleanup and bookkeeping must never mask the original error.
+    try { db?.close(); } catch { /* already closed */ }
+    try {
+      if (dbFile !== null && dbFile !== readPointerPath(opts.dataDir)) rmSync(dbFile, { force: true });
+    } catch { /* best effort */ }
+    try { log(`seed failed: ${err instanceof Error ? (err.stack ?? message) : message}`); } catch { /* ignore */ }
+    try {
+      writeState(paths.state, {
+        status: 'failed', startedAt, finishedAt: now().toISOString(), lastError: message, failures: prior.failures + 1,
+      });
+    } catch { /* ignore */ }
     throw err;
   } finally {
-    releaseLock(paths.lock);
+    try { releaseLock(paths.lock); } catch { /* ignore */ }
   }
 }
 
 function readPointerPath(dataDir: string): string | null {
   const name = readPointer(dataDir);
-  return name === null ? null : `${dataDir}/${name}`;
+  return name === null ? null : join(dataDir, name);
 }

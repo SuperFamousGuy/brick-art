@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireLock, readState, releaseLock, writeState } from '../../src/seed/lock.ts';
@@ -30,10 +30,34 @@ test('a lock held by a dead pid is replaced', async (t) => {
   assert.equal(await readFile(lock, 'utf8'), String(process.pid));
 });
 
-test('a lock with garbage content is treated as stale', async (t) => {
+test('an unparsable lock with an old mtime is stale', async (t) => {
   const lock = join(await tmp(t), 'seed.lock');
   await writeFile(lock, 'nope');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
   assert.equal(acquireLock(lock), true);
+});
+
+test('an empty lock with a fresh mtime is live', async (t) => {
+  const lock = join(await tmp(t), 'seed.lock');
+  await writeFile(lock, '');
+  assert.equal(acquireLock(lock), false);
+  assert.equal(existsSync(lock), true);
+});
+
+test('releaseLock does not remove another pid\'s lock', async (t) => {
+  const lock = join(await tmp(t), 'seed.lock');
+  await writeFile(lock, '999999');
+  releaseLock(lock);
+  assert.equal(await readFile(lock, 'utf8'), '999999');
+});
+
+test('acquireLock leaves no temp or stale files behind', async (t) => {
+  const dir = await tmp(t);
+  const lock = join(dir, 'seed.lock');
+  await writeFile(lock, '999999');
+  assert.equal(acquireLock(lock), true);
+  assert.deepEqual(await readdir(dir), ['seed.lock']);
 });
 
 test('releaseLock tolerates a missing file', async (t) => {
