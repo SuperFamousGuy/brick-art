@@ -1,0 +1,14 @@
+{
+  "name": "brick-art",
+  "description": "Claude Code plugins for designing LEGO-style brick models.",
+  "owner": {
+    "name": "SuperFamousGuy"
+  },
+  "plugins": [
+    {
+      "name": "brick-art",
+      "description": "Design buildable LEGO-style models from a text prompt, backed by a local database of real brick parts.",
+      "source": "./"
+    }
+  ]
+}
