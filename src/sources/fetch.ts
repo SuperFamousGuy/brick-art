@@ -41,6 +41,8 @@ export interface FetchedSources {
 export interface FetchOptions {
   refresh: boolean;
   maxAgeHours: number;
+  /** Abort a download when no bytes arrive for this long. Default 60000. */
+  idleTimeoutMs?: number;
   baseUrls?: Partial<SourceUrls>;
 }
 
@@ -50,26 +52,61 @@ const REBRICKABLE_TABLES = [
 ];
 const USER_AGENT = 'brick-art-seed';
 
-async function download(url: string, dest: string, name: string, headers: Record<string, string> = {}) {
-  const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, ...headers } });
-  if (!res.ok || !res.body) {
-    await res.body?.cancel().catch(() => {});
-    throw new Error(`download failed: ${name} ${res.status}`);
-  }
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
+
+/** Aborts `signal` when `touch()` has not been called for `ms`. */
+function idleGuard(ms: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: NodeJS.Timeout;
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timedOut = true; controller.abort(); }, ms);
+  };
+  touch();
+  return {
+    signal: controller.signal,
+    touch,
+    stop: () => clearTimeout(timer),
+    get timedOut() { return timedOut; },
+  };
+}
+
+async function download(
+  url: string, dest: string, name: string, idleTimeoutMs: number, headers: Record<string, string> = {},
+) {
+  const guard = idleGuard(idleTimeoutMs);
   const part = `${dest}.part`;
-  const hash = createHash('sha256');
-  let bytes = 0;
-  const meter = new Transform({
-    transform(chunk: Buffer, _enc, cb) { hash.update(chunk); bytes += chunk.length; cb(null, chunk); },
-  });
   try {
-    await pipeline(Readable.fromWeb(res.body as WebReadableStream), meter, createWriteStream(part));
-    await rename(part, dest);
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT, ...headers }, signal: guard.signal });
+    if (!res.ok || !res.body) {
+      await res.body?.cancel().catch(() => {});
+      throw new Error(`download failed: ${name} ${res.status}`);
+    }
+    const hash = createHash('sha256');
+    let bytes = 0;
+    const meter = new Transform({
+      transform(chunk: Buffer, _enc, cb) {
+        guard.touch();
+        hash.update(chunk);
+        bytes += chunk.length;
+        cb(null, chunk);
+      },
+    });
+    try {
+      await pipeline(Readable.fromWeb(res.body as WebReadableStream), meter, createWriteStream(part));
+      await rename(part, dest);
+    } catch (err) {
+      await rm(part, { force: true });
+      throw err;
+    }
+    return { bytes, sha256: hash.digest('hex'), lastModified: res.headers.get('last-modified') };
   } catch (err) {
-    await rm(part, { force: true });
+    if (guard.timedOut) throw new Error(`download failed: ${name} timeout`);
     throw err;
+  } finally {
+    guard.stop();
   }
-  return { bytes, sha256: hash.digest('hex'), lastModified: res.headers.get('last-modified') };
 }
 
 type StoredRecord = SourceRecord & { commit?: string };
@@ -90,9 +127,9 @@ async function readFresh(
 
 async function fetchOne(
   cacheDir: string, name: string, file: string, url: string, extra: Partial<StoredRecord> = {},
-  headers?: Record<string, string>,
+  idleTimeoutMs: number, headers?: Record<string, string>,
 ): Promise<StoredRecord> {
-  const info = await download(url, join(cacheDir, file), name, headers);
+  const info = await download(url, join(cacheDir, file), name, idleTimeoutMs, headers);
   const record: StoredRecord = {
     name, url, downloadedAt: new Date().toISOString(), ...info, ...extra,
   };
@@ -116,7 +153,8 @@ async function ensureExtracted(
     await rm(tmp, { recursive: true, force: true });
     await mkdir(tmp, { recursive: true });
     try {
-      await extractZip(zipFile, tmp, keep, strip);
+      const written = await extractZip(zipFile, tmp, keep, strip);
+      if (written === 0) throw new Error(`extraction produced no files: ${prefix}`);
       await rename(tmp, target);
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
@@ -133,27 +171,12 @@ async function ensureExtracted(
   return target;
 }
 
-export async function fetchSources(cacheDir: string, opts: FetchOptions): Promise<FetchedSources> {
-  const urls: SourceUrls = { ...DEFAULT_SOURCE_URLS, ...opts.baseUrls };
-  await mkdir(cacheDir, { recursive: true });
-  const records: StoredRecord[] = [];
-
-  for (const name of REBRICKABLE_TABLES) {
-    const file = `${name}.csv.gz`;
-    records.push(
-      (await readFresh(cacheDir, name, file, opts)) ??
-        (await fetchOne(cacheDir, name, file, `${urls.rebrickableBase}/${name}.csv.gz`)),
-    );
-  }
-
-  const ldraw = (await readFresh(cacheDir, 'ldraw', 'ldraw.zip', opts)) ??
-    (await fetchOne(cacheDir, 'ldraw', 'ldraw.zip', urls.ldrawZip));
-  records.push(ldraw);
-
-  let ldcad = await readFresh(cacheDir, 'ldcad', 'ldcad.zip', opts);
-  if (!ldcad?.commit) {
-    const res = await fetch(urls.ldcadCommitApi, {
+async function fetchCommitSha(url: string, idleTimeoutMs: number): Promise<string> {
+  const guard = idleGuard(idleTimeoutMs);
+  try {
+    const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, Accept: 'application/vnd.github+json' },
+      signal: guard.signal,
     });
     if (!res.ok) {
       await res.body?.cancel().catch(() => {});
@@ -161,7 +184,37 @@ export async function fetchSources(cacheDir: string, opts: FetchOptions): Promis
     }
     const sha = ((await res.json()) as { sha?: unknown }).sha;
     if (typeof sha !== 'string' || sha === '') throw new Error('download failed: ldcad-commit no sha');
-    ldcad = await fetchOne(cacheDir, 'ldcad', 'ldcad.zip', `${urls.ldcadArchiveBase}/${sha}`, { commit: sha });
+    return sha;
+  } catch (err) {
+    if (guard.timedOut) throw new Error('download failed: ldcad-commit timeout');
+    throw err;
+  } finally {
+    guard.stop();
+  }
+}
+
+export async function fetchSources(cacheDir: string, opts: FetchOptions): Promise<FetchedSources> {
+  const urls: SourceUrls = { ...DEFAULT_SOURCE_URLS, ...opts.baseUrls };
+  await mkdir(cacheDir, { recursive: true });
+  const idleMs = opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
+  const records: StoredRecord[] = [];
+
+  for (const name of REBRICKABLE_TABLES) {
+    const file = `${name}.csv.gz`;
+    records.push(
+      (await readFresh(cacheDir, name, file, opts)) ??
+        (await fetchOne(cacheDir, name, file, `${urls.rebrickableBase}/${name}.csv.gz`, {}, idleMs)),
+    );
+  }
+
+  const ldraw = (await readFresh(cacheDir, 'ldraw', 'ldraw.zip', opts)) ??
+    (await fetchOne(cacheDir, 'ldraw', 'ldraw.zip', urls.ldrawZip, {}, idleMs));
+  records.push(ldraw);
+
+  let ldcad = await readFresh(cacheDir, 'ldcad', 'ldcad.zip', opts);
+  if (!ldcad?.commit) {
+    const sha = await fetchCommitSha(urls.ldcadCommitApi, idleMs);
+    ldcad = await fetchOne(cacheDir, 'ldcad', 'ldcad.zip', `${urls.ldcadArchiveBase}/${sha}`, { commit: sha }, idleMs);
   }
   records.push(ldcad);
 

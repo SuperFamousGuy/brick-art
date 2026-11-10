@@ -130,3 +130,61 @@ test('extractZip filters, strips the prefix, and blocks zip-slip', async (t) => 
   await assert.rejects(stat(join(dir, 'evil.dat')));
   await assert.rejects(stat(join(dest, 'other')));
 });
+
+test('idle timeout aborts a stalled download', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-idle-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const server: Server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.write('x');
+    // never ends
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const cacheDir = join(dir, 'cache');
+  await assert.rejects(
+    fetchSources(cacheDir, {
+      refresh: true, maxAgeHours: 24, idleTimeoutMs: 200, baseUrls: { rebrickableBase: `${base}/rb` },
+    }),
+    { message: 'download failed: parts timeout' },
+  );
+  assert.ok(!(await readdir(cacheDir)).some((n) => n.endsWith('.part')));
+});
+
+test('idle timeout also covers a stalled commit API call', async (t) => {
+  const s = await setup(t);
+  const stall: Server = createServer((_req, res) => { res.writeHead(200); res.write('{'); });
+  await new Promise<void>((r) => stall.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise<void>((r) => { stall.closeAllConnections(); stall.close(() => r()); }));
+  const stallBase = `http://127.0.0.1:${(stall.address() as { port: number }).port}`;
+  await assert.rejects(
+    fetchSources(s.cacheDir, {
+      refresh: true, maxAgeHours: 24, idleTimeoutMs: 200,
+      baseUrls: { ...s.baseUrls, ldcadCommitApi: `${stallBase}/commits/main` },
+    }),
+    { message: 'download failed: ldcad-commit timeout' },
+  );
+});
+
+test('an archive that extracts to zero files is rejected and not cached', async (t) => {
+  const s = await setup(t);
+  const empty = join(s.dir, 'empty.zip');
+  await writeFile(empty, zipSync({ 'ldraw/readme.txt': new TextEncoder().encode('hi') }));
+  const mid: Server = createServer(async (req, res) => {
+    if (req.url === '/ldraw/complete.zip') { res.end(await readFile(empty)); return; }
+    res.statusCode = 404; res.end();
+  });
+  await new Promise<void>((r) => mid.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise<void>((r) => { mid.closeAllConnections(); mid.close(() => r()); }));
+  const midBase = `http://127.0.0.1:${(mid.address() as { port: number }).port}`;
+  await assert.rejects(
+    fetchSources(s.cacheDir, {
+      refresh: false, maxAgeHours: 24, baseUrls: { ...s.baseUrls, ldrawZip: `${midBase}/ldraw/complete.zip` },
+    }),
+    { message: 'extraction produced no files: ldraw' },
+  );
+  const extractDir = join(s.cacheDir, 'extract');
+  const left = await readdir(extractDir).catch(() => [] as string[]);
+  assert.deepEqual(left, []);
+});

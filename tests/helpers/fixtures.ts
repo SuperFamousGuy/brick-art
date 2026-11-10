@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { zipSync } from 'fflate';
+import type { FetchedSources } from '../../src/sources/fetch.ts';
 
 export interface FixtureSources {
   dir: string;
@@ -242,4 +243,27 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
   await writeFile(ldrawZip, zipTree('ldraw', ldraw));
   await writeFile(ldcadZip, zipTree('LDCadShadowLibrary-abc123', shadow));
   return { dir, rebrickableDir, ldrawRoot, shadowRoot, ldrawZip, ldcadZip };
+}
+
+const SOURCE_NAMES = [
+  'parts', 'part_categories', 'part_relationships', 'colors', 'elements',
+  'inventory_parts', 'inventories', 'sets', 'ldraw', 'ldcad',
+];
+
+/** Prebuilt `FetchedSources` pointing at the fixture trees, with synthetic source records. */
+export function fixtureFetched(fx: FixtureSources): FetchedSources {
+  return {
+    rebrickableDir: fx.rebrickableDir,
+    ldrawRoot: fx.ldrawRoot,
+    shadowRoot: fx.shadowRoot,
+    ldcadCommit: 'abc123',
+    records: SOURCE_NAMES.map((name, i) => ({
+      name,
+      url: `https://example.test/${name}`,
+      downloadedAt: '2026-11-09T00:00:00.000Z',
+      bytes: 100 + i,
+      sha256: String(i).padStart(64, '0'),
+      lastModified: null,
+    })),
+  };
 }
