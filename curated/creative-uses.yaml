@@ -35,7 +35,7 @@
 # Tile 1 x 2 with Groove
 - part: "3069b"
   represents: book
-  note: 1x2 tiles stood on end in a row read as books on a shelf
+  note: 1x2 tiles stacked flat on a shelf read as a pile of books
   reviewed: false
 
 # Plate 1 x 1
@@ -65,7 +65,7 @@
 # Plate Round 2 x 2 with Axle Hole Type 1 (+ Opening)
 - part: "4032a"
   represents: wheel
-  note: turns on an axle through the center hole as a small wheel
+  note: fixed on an axle through the center hole as a small wheel
   reviewed: false
 - part: "4032a"
   represents: dinner plate
@@ -207,7 +207,7 @@
   reviewed: false
 - part: "4740"
   represents: shield
-  note: held in a minifigure hand or mounted on a wall as a round shield
+  note: mounted on a wall stud or a SNOT brick as a round shield
   reviewed: false
 - part: "4740"
   represents: lamp shade
@@ -215,10 +215,6 @@
   reviewed: false
 
 # Bar 4L (Lightsaber Blade / Wand)
-- part: "30374"
-  represents: sword blade
-  note: the bar 4L piece also works as a lightsaber blade
-  reviewed: false
 - part: "30374"
   represents: antenna
   note: clipped or held upright on a vehicle or building
@@ -331,7 +327,7 @@
 # Weapon Lightsaber Hilt with Bottom Ring
 - part: "64567"
   represents: lever
-  note: on a stud or bar it reads as a control lever or gear stick
+  note: fitted into an open stud or a clip it reads as a control lever or gear stick
   reviewed: false
 - part: "64567"
   represents: pipe
@@ -405,13 +401,13 @@
 # Antenna 1 x 4 with Rounded Top
 - part: "3957a"
   represents: flagpole
-  note: held in a stud with a flag clipped on
+  note: the base attaches on a stud, with a flag clipped on the shaft
   reviewed: false
 
 # Antenna 1 x 4 with Flat Top
 - part: "3957b"
   represents: flagpole
-  note: held in a stud with a flag clipped on
+  note: the base attaches on a stud, with a flag clipped on the shaft
   reviewed: false
 
 # Rock 1 x 1 Jewel / Gem 24 Facet
@@ -427,7 +423,7 @@
 # Dish 3 x 3 Inverted [Radar]
 - part: "43898"
   represents: shield
-  note: held in a minifigure hand or mounted on a wall as a round shield
+  note: mounted on a wall stud or a SNOT brick as a round shield
   reviewed: false
 - part: "43898"
   represents: lamp shade
@@ -469,7 +465,7 @@
 # Pneumatic T-Piece (T Bar) [New Style]
 - part: "4697b"
   represents: pipe
-  note: joined with bars or axles as a T-shaped pipe junction
+  note: a T-junction where pneumatic hoses branch in a pipe run
   reviewed: false
 
 # Flame / Headwear Accessory Plume / Feather, Triple Point

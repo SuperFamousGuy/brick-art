@@ -123,6 +123,7 @@ test('the shipped curated files load and validate', async () => {
   const pairs = c.uses.map((u) => `${u.part}|${u.represents}`);
   assert.equal(new Set(pairs).size, pairs.length, 'no duplicate part/represents pairs');
   assert.ok(c.uses.every((u) => u.represents === u.represents.toLowerCase()));
+  assert.ok(c.uses.every((u) => (u.note ?? '').trim() !== ''), 'every entry has a note');
   assert.ok(c.uses.every((u) => u.reviewed === false));
   assert.ok(c.uses.some((u) => u.part === '33085' && u.represents === 'flower petal'));
   assert.equal(c.families.get(0), 'black');
