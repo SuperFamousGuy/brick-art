@@ -91,3 +91,18 @@ test('malformed input throws SnapParseError naming the parameter and line', () =
   assert.equal(gridOffsets('100 1 20 20').length, 100);
   assert.throws(() => expandSnap({ kind: 'CYL', params: { pos: 'a b c' } }, 'RAW'), /RAW/);
 });
+
+test('three-axis grids (x, y, z counts then steps) expand along y', () => {
+  assert.deepEqual(gridOffsets('1 C 2 1 0 46 0'), [[0, -23, 0], [0, 23, 0]]);
+  assert.deepEqual(gridOffsets('1 3 1 0 -60 0'), [[0, 0, 0], [0, -60, 0], [0, -120, 0]]);
+});
+
+test('real 2486.dat line with a three-axis grid parses and expands to 2 points', () => {
+  const line = '0 !LDCAD SNAP_CYL [gender=M] [caps=two] [secs=R 4 38] [center=true] [slide=true] [pos=0 36 0] [ori=0 -1 0 1 0 0 0 0 1] [grid=1 C 2 1 0 46 0]';
+  assert.equal(expand(line).length, 2);
+});
+
+test('grid with a wrong number of values is still rejected', () => {
+  assert.throws(() => gridOffsets('1 2 3 4 5'), SnapParseError);
+  assert.throws(() => gridOffsets('1 1 1 0 0 0 0'), SnapParseError);
+});

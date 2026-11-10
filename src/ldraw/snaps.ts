@@ -11,6 +11,7 @@ export class SnapParseError extends Error {
 }
 
 const MAX_GRID_COUNT = 100;
+const MAX_GRID_POINTS = 10000;
 const KINDS: readonly string[] = ['CYL', 'CLP', 'FGR', 'SPH', 'GEN', 'INCL', 'CLEAR'];
 const IDENTITY: Mat3 = [1, 0, 0, 0, 1, 0, 0, 0, 1];
 const KIND_RE = /^\s*0\s+!LDCAD\s+SNAP_([A-Za-z]+)/;
@@ -54,33 +55,48 @@ export function snapPosOri(spec: SnapSpec): { pos: Vec3; ori: Mat3 } {
   return { pos, ori };
 }
 
-/** Expand a `grid` value such as `C 4 C 2 20 20` into offsets `(gx, 0, gz)`. */
+/**
+ * Expand a `grid` value into offsets `(gx, gy, gz)`. Two forms exist: `C 4 C 2 20 20` (x and z counts,
+ * then x and z steps) and `1 C 2 1 0 46 0` (x, y, and z counts, then x, y, and z steps).
+ */
 export function gridOffsets(grid: string | undefined): Vec3[] {
   if (grid === undefined) return [[0, 0, 0]];
   const bad = (why: string): SnapParseError => new SnapParseError(`Malformed grid "${grid}" (${why})`);
   if (grid.trim() === '') throw bad('empty');
   const tokens = grid.trim().split(/\s+/);
+  const numeric = tokens.filter((t) => t.toUpperCase() !== 'C').length;
+  const dims = numeric === 4 ? 2 : numeric === 6 ? 3 : 0;
+  if (dims === 0) throw bad('expected counts followed by steps');
   let i = 0;
-  const axis = (): { count: number; centered: boolean } => {
+  const axes: Array<{ count: number; centered: boolean }> = [];
+  for (let d = 0; d < dims; d++) {
     let centered = false;
     if (tokens[i]?.toUpperCase() === 'C') { centered = true; i++; }
     const count = Number(tokens[i++]);
     if (!Number.isInteger(count) || count < 1) throw bad('count must be a positive integer');
     if (count > MAX_GRID_COUNT) throw bad(`count ${count} exceeds ${MAX_GRID_COUNT}`);
-    return { count, centered };
-  };
-  const x = axis();
-  const z = axis();
-  const stepX = Number(tokens[i]);
-  const stepZ = Number(tokens[i + 1]);
-  if (tokens.length !== i + 2 || !Number.isFinite(stepX) || !Number.isFinite(stepZ)) {
-    throw bad('expected counts followed by two steps');
+    axes.push({ count, centered });
   }
+  const steps = tokens.slice(i).map(Number);
+  if (steps.length !== dims || !steps.every((n) => Number.isFinite(n))) {
+    throw bad('expected counts followed by steps');
+  }
+  const total = axes.reduce((n, a) => n * a.count, 1);
+  if (total > MAX_GRID_POINTS) throw bad(`${total} points exceeds ${MAX_GRID_POINTS}`);
+  // Two-axis grids lie in the x/z plane; three-axis grids add the y axis in the middle.
+  const slots = dims === 2 ? [0, 2] : [0, 1, 2];
   const at = (idx: number, a: { count: number; centered: boolean }, step: number): number =>
     (a.centered ? idx - (a.count - 1) / 2 : idx) * step + 0; // + 0 turns -0 into 0
   const out: Vec3[] = [];
-  for (let ix = 0; ix < x.count; ix++) {
-    for (let iz = 0; iz < z.count; iz++) out.push([at(ix, x, stepX), 0, at(iz, z, stepZ)]);
+  const idx = new Array<number>(dims).fill(0);
+  for (let n = 0; n < total; n++) {
+    const v: Vec3 = [0, 0, 0];
+    for (let d = 0; d < dims; d++) v[slots[d]!] = at(idx[d]!, axes[d]!, steps[d]!);
+    out.push(v);
+    for (let d = dims - 1; d >= 0; d--) {
+      if (++idx[d]! < axes[d]!.count) break;
+      idx[d] = 0;
+    }
   }
   return out;
 }
