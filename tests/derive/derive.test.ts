@@ -70,3 +70,27 @@ test('matchRateTop ranks by set count', () => {
   assert.equal(matchRateTop(rb, m, counts, 0), 0);
   assert.equal(matchRateTop(rb, new Map(), counts, 3), 0);
 });
+
+test('deriveTraits reads slope angles from live Rebrickable names', () => {
+  const cases: [string, number | null][] = [
+    ['Brick Sloped 45° 2 x 2', 45],
+    ['Brick Sloped 45° 2 x 4', 45],
+    ['Brick Sloped 45° 2 x 1 with Bottom Pin', 45],
+    ['Brick Sloped 33° 3 x 2', 33],
+    ['Brick Sloped 30° 1 x 1 x 2/3 (Cheese Slope)', 30],
+    ['Brick Sloped 65° 2 x 1 x 2', 65],
+    ['Brick Sloped Inverted 45° 2 x 1', 45],
+    ['Slope 45° 2 x 2', 45],
+    ['Brick Sloped 2 x 2 Triple', null],
+  ];
+  for (const [name, angle] of cases) {
+    const t = deriveTraits({ name, categoryName: 'Other', connections: [], colorsTrans: [] });
+    assert.equal(t.slopeAngle, angle, name);
+    assert.ok(t.traits.includes('slope'), name);
+  }
+  const plural = deriveTraits({
+    name: 'Plate Special 4 x 7 with 3 Slopes, Wedges, 3 Axle Holes', categoryName: 'Plates Special',
+    connections: [], colorsTrans: [],
+  });
+  assert.ok(plural.traits.includes('slope'));
+});

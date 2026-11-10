@@ -34,7 +34,7 @@ const PARTS: [string, string, number][] = [
   ['3004', 'Brick 1 x 2', 11],
   ['3005', 'Brick 1 x 1', 11],
   ['3023', 'Plate 1 x 2', 14],
-  ['3039', 'Slope 45° 2 x 2', 3],
+  ['3039', 'Brick Sloped 45° 2 x 2', 3],
   ['87087', 'Brick Special 1 x 1 with Stud on 1 Side', 5],
   ['60478', 'Plate Special 1 x 2 with Bar Handle on End', 14],
   ['15712', 'Tile Special 1 x 1 with Clip', 19],

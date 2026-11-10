@@ -63,6 +63,7 @@ test('searchParts traits filter and summary traits', () => {
   assert.deepEqual(nums(rows), ['3039']);
   assert.ok(rows[0]!.traits.includes('slope'));
   assert.deepEqual(rows[0]!.traits, [...rows[0]!.traits].sort());
+  assert.deepEqual(nums(searchParts(db, { slopeAngle: 45 })), ['3039']);
 });
 
 test('searchParts include flags, nameContains, and limit', () => {
