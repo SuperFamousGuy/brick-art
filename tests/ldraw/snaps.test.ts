@@ -106,3 +106,14 @@ test('grid with a wrong number of values is still rejected', () => {
   assert.throws(() => gridOffsets('1 2 3 4 5'), SnapParseError);
   assert.throws(() => gridOffsets('1 1 1 0 0 0 0'), SnapParseError);
 });
+
+test('SNAP_GEN with spherical bounding is a ball or socket (real LDCad lines)', () => {
+  // From the LDCad shadow library: a Technic ball joint and a 63082 socket.
+  const ball = expand('0 !LDCAD SNAP_GEN [group=techBallJnt] [gender=M] [bounding=sph 12.7] [match=size] [placement=free] [pos=0 0 -60]');
+  assert.equal(ball[0]!.type, 'ball');
+  assert.deepEqual(ball[0]!.position, [0, 0, -60]);
+  const socket = expand('0 !LDCAD SNAP_GEN [gender=F] [bounding=sph 8] [match=size] [placement=free] [pos=0 4 -30]');
+  assert.equal(socket[0]!.type, 'socket');
+  assert.equal(expand('0 !LDCAD SNAP_GEN [gender=M] [bounding=box 4 4 4]')[0]!.type, 'other');
+  assert.equal(expand('0 !LDCAD SNAP_GEN [gender=F] [bounding=cyl 6 8]')[0]!.type, 'other');
+});

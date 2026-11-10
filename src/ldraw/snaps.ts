@@ -172,6 +172,13 @@ function expandSnapUnchecked(spec: SnapSpec, raw: string): ConnectionPoint[] {
       break;
     }
     case 'SPH': type = male ? 'ball' : 'socket'; faceUp = !male; break;
+    case 'GEN': {
+      // LDCad writes ball joints as SNAP_GEN [bounding=sph <radius>].
+      const sphere = /^sph\b/i.test((p.bounding ?? '').trim());
+      type = sphere ? (male ? 'ball' : 'socket') : 'other';
+      faceUp = !male;
+      break;
+    }
     default: type = 'other'; faceUp = !male; break;
   }
   const { pos, ori } = snapPosOri(spec);
