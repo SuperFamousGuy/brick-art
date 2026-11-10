@@ -119,7 +119,10 @@ test('curatedDir joins the repo root with curated', () => {
 
 test('the shipped curated files load and validate', async () => {
   const c = await loadCurated(curatedDir(process.cwd()));
-  assert.equal(c.uses.length, 5);
+  assert.ok(c.uses.length > 0);
+  const pairs = c.uses.map((u) => `${u.part}|${u.represents}`);
+  assert.equal(new Set(pairs).size, pairs.length, 'no duplicate part/represents pairs');
+  assert.ok(c.uses.every((u) => u.represents === u.represents.toLowerCase()));
   assert.ok(c.uses.every((u) => u.reviewed === false));
   assert.ok(c.uses.some((u) => u.part === '33085' && u.represents === 'flower petal'));
   assert.equal(c.families.get(0), 'black');
