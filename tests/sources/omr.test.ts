@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fetchOmr } from '../../src/sources/omr.ts';
@@ -111,4 +111,40 @@ test('ignores absolute hosts found in pages and thumbnails', async (t) => {
   const { run, fake } = await setup(t);
   await run();
   assert.equal(fake.hits.has('/media/omr_models/1/x-thumb.png'), false);
+});
+
+test('failed downloads are listed with url and reason', async (t) => {
+  const pages = site();
+  pages.set('/media/omr_models/30/10003-1.ldr', 404);
+  const { run } = await setup(t, pages);
+  const r = await run();
+  assert.equal(r.failed, 1);
+  assert.equal(r.failedUrls.length, 1);
+  assert.ok(r.failedUrls[0].url.endsWith('/media/omr_models/30/10003-1.ldr?v=1'));
+  assert.match(r.failedUrls[0].reason, /404/);
+});
+
+test('filesystem errors reject, and files saved before the error stay indexed', async (t) => {
+  const { run, fake, dir } = await setup(t);
+  await mkdir(join(dir, 'omr'), { recursive: true });
+  await writeFile(join(dir, 'omr', '30'), 'not a directory'); // blocks writing set 3's file
+  await assert.rejects(run());
+  const index = JSON.parse(await readFile(join(dir, 'omr', 'index.json'), 'utf8')) as Record<string, unknown>;
+  assert.equal(Object.keys(index).length, 3);
+
+  await rm(join(dir, 'omr', '30'));
+  const before = fileHits(fake.hits);
+  const r = await run();
+  assert.equal(r.fromCache, 3);
+  assert.equal(r.fetched, 1);
+  assert.equal(fileHits(fake.hits), before + 1);
+});
+
+test('links without a set number are not downloaded', async (t) => {
+  const pages = site();
+  pages.set('/omr/sets/2', setPage(file(20, '10002-1.mpd', 1), file(21, 'readme.mpd', 1)));
+  const { run, fake } = await setup(t, pages);
+  const r = await run();
+  assert.equal(r.files.length, 4);
+  assert.equal(fake.hits.has('/media/omr_models/21/readme.mpd'), false);
 });

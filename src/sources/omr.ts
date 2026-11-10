@@ -10,11 +10,15 @@ export interface OmrOptions {
   backoffMs?: number;
 }
 
-export interface OmrResult { files: OmrFile[]; fetched: number; fromCache: number; failed: number; bytes: number }
+export interface OmrResult {
+  files: OmrFile[]; fetched: number; fromCache: number; failed: number;
+  failedUrls: { url: string; reason: string }[]; bytes: number;
+}
 
 const DEFAULT_BASE_URL = 'https://library.ldraw.org';
 const USER_AGENT = 'brick-art-seed';
 const REQUEST_TIMEOUT_MS = 60_000;
+const FLUSH_EVERY = 25;
 
 // Absolute or relative hrefs both match; only the captured path is ever requested, from baseUrl.
 const SET_LINK = /\/omr\/sets\/(\d+)(?=["'?#\s>])/g;
@@ -97,13 +101,15 @@ export async function fetchOmr(cacheDir: string, opts: OmrOptions = {}): Promise
 
   // Collect file links from every set page. A set page that fails is skipped.
   let failed = 0;
+  const failedUrls: { url: string; reason: string }[] = [];
   const links = new Map<string, { path: string; name: string; v: string }>();
   await Promise.all([...setIds].map(async (id) => {
     try {
       const html = await getText(`/omr/sets/${id}`);
       for (const m of html.matchAll(FILE_LINK)) links.set(m[1], { path: m[1], name: m[2], v: m[3] });
-    } catch {
+    } catch (err) {
       failed++;
+      failedUrls.push({ url: `${base}/omr/sets/${id}`, reason: (err as Error).message });
     }
   }));
 
@@ -117,29 +123,47 @@ export async function fetchOmr(cacheDir: string, opts: OmrOptions = {}): Promise
   let fetched = 0;
   let fromCache = 0;
   let bytes = 0;
-  await Promise.all([...links.values()].sort((a, b) => a.path.localeCompare(b.path)).map(async (link) => {
+  let sinceFlush = 0;
+  let flushing: Promise<void> = Promise.resolve();
+  // Index writes are serialized and atomic, so a kill never leaves a torn index.json.
+  const flush = () => {
+    flushing = flushing.then(async () => {
+      await writeFile(`${indexPath}.part`, JSON.stringify(index, null, 2));
+      await rename(`${indexPath}.part`, indexPath);
+    });
+    return flushing;
+  };
+
+  // Links without a set number are not models of a set; skip them before downloading.
+  const wanted = [...links.values()]
+    .filter((l) => /^[0-9A-Za-z]+-\d+/.test(safeDecode(l.name)))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const results = await Promise.allSettled(wanted.map(async (link) => {
     const ext = link.path.slice(link.path.lastIndexOf('.'));
-    const fileName = `${safeDecode(link.name)}${ext}`;
+    const stem = safeDecode(link.name);
+    const fileName = `${stem}${ext}`;
     const dest = join(omrDir, link.path.split('/')[3], fileName.replace(/[\\/:]/g, '_'));
     const cached = index[link.path];
     const fresh = cached?.v === link.v && await stat(dest).then((s) => s.isFile(), () => false);
     if (!fresh) {
+      let body: Buffer;
       try {
-        const body = await getBytes(`${link.path}?v=${link.v}`);
-        await mkdir(dirname(dest), { recursive: true });
-        await writeFile(`${dest}.part`, body);
-        await rename(`${dest}.part`, dest);
-        index[link.path] = { v: link.v, file: dest.slice(omrDir.length + 1) };
-        fetched++;
-        bytes += body.length;
-      } catch {
+        body = await getBytes(`${link.path}?v=${link.v}`);
+      } catch (err) {
         failed++;
+        failedUrls.push({ url: `${base}${link.path}?v=${link.v}`, reason: (err as Error).message });
         return;
       }
+      // Filesystem errors are not download failures: they propagate.
+      await mkdir(dirname(dest), { recursive: true });
+      await writeFile(`${dest}.part`, body);
+      await rename(`${dest}.part`, dest);
+      index[link.path] = { v: link.v, file: dest.slice(omrDir.length + 1) };
+      fetched++;
+      bytes += body.length;
+      if (++sinceFlush >= FLUSH_EVERY) { sinceFlush = 0; await flush(); }
     } else fromCache++;
-    const stem = safeDecode(link.name);
-    const num = /^([0-9A-Za-z]+-\d+)/.exec(stem);
-    if (!num) return;
+    const num = /^([0-9A-Za-z]+-\d+)/.exec(stem) as RegExpExecArray;
     files.push({
       setNum: num[1],
       fileName,
@@ -149,9 +173,11 @@ export async function fetchOmr(cacheDir: string, opts: OmrOptions = {}): Promise
     });
   }));
 
-  await writeFile(indexPath, JSON.stringify(index, null, 2));
+  await flush();
+  const rejected = results.find((r) => r.status === 'rejected');
+  if (rejected) throw (rejected as PromiseRejectedResult).reason;
   files.sort((a, b) => a.fileName.localeCompare(b.fileName));
-  return { files, fetched, fromCache, failed, bytes };
+  return { files, fetched, fromCache, failed, failedUrls, bytes };
 }
 
 function safeDecode(s: string): string {
