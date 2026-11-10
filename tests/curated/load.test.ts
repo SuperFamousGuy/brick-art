@@ -15,18 +15,30 @@ const USES = `- part: "33085"
   reviewed: true
 `;
 
+const FAN = `- id: demo
+  name: Demo
+  homepage: https://example.com
+  fetch:
+    kind: github
+    repo: o/r
+    paths: ["models/**/*.ldr"]
+  designer: Demo people
+`;
+
 let dir: string;
 before(async () => {
   dir = await mkdtemp(join(tmpdir(), 'curated-'));
   await writeFile(join(dir, 'color-families.yaml'), FAMILIES);
   await writeFile(join(dir, 'creative-uses.yaml'), USES);
+  await writeFile(join(dir, 'fan-sources.yaml'), FAN);
 });
 after(() => rm(dir, { recursive: true, force: true }));
 
-async function makeDir(families: string, uses: string): Promise<string> {
+async function makeDir(families: string, uses: string, fan = FAN): Promise<string> {
   const d = await mkdtemp(join(tmpdir(), 'curated-x-'));
   await writeFile(join(d, 'color-families.yaml'), families);
   await writeFile(join(d, 'creative-uses.yaml'), uses);
+  await writeFile(join(d, 'fan-sources.yaml'), fan);
   return d;
 }
 
@@ -131,4 +143,56 @@ test('the shipped curated files load and validate', async () => {
   assert.equal(c.families.get(9999), 'other');
   const r = validateUses(c.uses, new Set(c.uses.map((u) => u.part)));
   assert.equal(r.rejected.length, 0);
+});
+
+test('loads fan sources with snake_case keys mapped to camelCase', async () => {
+  const c = await loadCurated(dir);
+  assert.deepEqual(c.fanSources, [{
+    id: 'demo', name: 'Demo', homepage: 'https://example.com',
+    fetch: { kind: 'github', repo: 'o/r', paths: ['models/**/*.ldr'] },
+    designer: 'Demo people', defaultLicense: null,
+  }]);
+  const d = await makeDir(FAMILIES, USES, FAN + '  default_license: CC0\n');
+  try {
+    assert.equal((await loadCurated(d)).fanSources[0]!.defaultLicense, 'CC0');
+  } finally {
+    await rm(d, { recursive: true, force: true });
+  }
+});
+
+test('changing fan-sources.yaml changes the hash', async () => {
+  const a = await loadCurated(dir);
+  const d = await makeDir(FAMILIES, USES, FAN.replace('Demo people', 'Other people'));
+  try {
+    assert.notEqual((await loadCurated(d)).hash, a.hash);
+  } finally {
+    await rm(d, { recursive: true, force: true });
+  }
+});
+
+test('a fan source entry with a problem throws an error naming it', async () => {
+  const cases: [string, RegExp][] = [
+    [FAN.replace('    kind: github\n', ''), /fan-sources\.yaml: demo: .*fetch\.kind/],
+    [FAN.replace('    paths: ["models/**/*.ldr"]\n', ''), /fan-sources\.yaml: demo: .*paths/],
+    [FAN.replace('o/r', 'nope'), /fan-sources\.yaml: demo: .*repo/],
+    [FAN.replace('  designer: Demo people\n', ''), /fan-sources\.yaml: demo: missing designer/],
+    [FAN + FAN, /fan-sources\.yaml: demo: duplicate id/],
+    ['- name: x\n', /fan-sources\.yaml: entry 1: id/],
+  ];
+  for (const [yaml, re] of cases) {
+    const d = await makeDir(FAMILIES, USES, yaml);
+    try {
+      await assert.rejects(loadCurated(d), re);
+    } finally {
+      await rm(d, { recursive: true, force: true });
+    }
+  }
+});
+
+test('the shipped fan sources include Datsville without a default license', async () => {
+  const c = await loadCurated(curatedDir(process.cwd()));
+  const d = c.fanSources.find((s) => s.id === 'datsville')!;
+  assert.equal(d.fetch.kind, 'github');
+  assert.equal(d.defaultLicense, null);
+  assert.ok(d.fetch.paths.length > 0);
 });

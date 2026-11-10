@@ -72,7 +72,7 @@ function idleGuard(ms: number) {
   };
 }
 
-async function download(
+export async function download(
   url: string, dest: string, name: string, idleTimeoutMs: number, headers: Record<string, string> = {},
 ) {
   const guard = idleGuard(idleTimeoutMs);
@@ -109,9 +109,9 @@ async function download(
   }
 }
 
-type StoredRecord = SourceRecord & { commit?: string };
+export type StoredRecord = SourceRecord & { commit?: string };
 
-async function readFresh(
+export async function readFresh(
   cacheDir: string, name: string, file: string, opts: FetchOptions,
 ): Promise<StoredRecord | null> {
   if (opts.refresh) return null;
@@ -125,7 +125,7 @@ async function readFresh(
   }
 }
 
-async function fetchOne(
+export async function fetchOne(
   cacheDir: string, name: string, file: string, url: string, extra: Partial<StoredRecord> = {},
   idleTimeoutMs: number, headers?: Record<string, string>,
 ): Promise<StoredRecord> {
@@ -141,7 +141,7 @@ function publicRecord({ commit: _commit, ...record }: StoredRecord): SourceRecor
   return record;
 }
 
-async function ensureExtracted(
+export async function ensureExtracted(
   cacheDir: string, prefix: string, zipFile: string, sha256: string,
   keep: (path: string) => boolean, strip: RegExp, keySuffix = '',
 ): Promise<string> {
@@ -173,7 +173,7 @@ async function ensureExtracted(
   return target;
 }
 
-async function fetchCommitSha(url: string, idleTimeoutMs: number): Promise<string> {
+export async function fetchCommitSha(url: string, idleTimeoutMs: number): Promise<string> {
   const guard = idleGuard(idleTimeoutMs);
   try {
     const res = await fetch(url, {
