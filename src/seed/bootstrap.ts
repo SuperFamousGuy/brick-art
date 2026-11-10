@@ -41,6 +41,10 @@ export async function needsSeed(
   return { needed: false, reason: 'ok' };
 }
 
+/** The first line of an error, trimmed and capped, so the hook prints one short line. */
+const firstLine = (err: string | null): string =>
+  (err ?? '').split(/\r?\n/, 1)[0]!.trim().slice(0, 200) || 'unknown error';
+
 const BUILDING = 'brick-art: building the parts database in the background (first run takes a few minutes).';
 
 /** Returns the line for the hook to print; starts a background seed through spawnSeed when one is needed. */
@@ -52,7 +56,7 @@ export async function bootstrap(dataDir: string, repoRoot: string, spawnSeed: ()
       const state = readState(dataPaths(dataDir).state);
       spawnSeed();
       return state.status === 'failed'
-        ? `brick-art: last parts database build failed: ${state.lastError ?? 'unknown error'}. Retrying in the background.`
+        ? `brick-art: last parts database build failed: ${firstLine(state.lastError)}. Retrying in the background.`
         : BUILDING;
     }
     const manifest = readManifest(dataDir);

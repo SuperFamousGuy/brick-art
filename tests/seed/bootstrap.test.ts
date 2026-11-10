@@ -99,6 +99,22 @@ test('failed state prints the failure line and retries', async (t) => {
   assert.equal(c.calls, 1);
 });
 
+test('a multi-line lastError shows only its first line, trimmed and capped at 200 characters', async (t) => {
+  const s = await setup(t);
+  const path = dataPaths(s.dataDir).state;
+  const failed = { status: 'failed' as const, startedAt: null, finishedAt: null, failures: 1 };
+  writeState(path, { ...failed, lastError: '  first line  \n    at stack (x.ts:1:1)\n' });
+  assert.equal(
+    await bootstrap(s.dataDir, repoRoot, () => {}),
+    'brick-art: last parts database build failed: first line. Retrying in the background.',
+  );
+  writeState(path, { ...failed, lastError: 'x'.repeat(500) });
+  assert.equal(
+    await bootstrap(s.dataDir, repoRoot, () => {}),
+    `brick-art: last parts database build failed: ${'x'.repeat(200)}. Retrying in the background.`,
+  );
+});
+
 test('spawn errors are caught and reported on the line', async (t) => {
   const s = await setup(t);
   const line = await bootstrap(s.dataDir, repoRoot, () => { throw new Error('nope'); });
