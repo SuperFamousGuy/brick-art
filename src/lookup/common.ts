@@ -93,7 +93,7 @@ export function buildPartWhere(f: PartFilter): { sql: string; params: (string | 
   if (f.colorFamily !== undefined) {
     where.push(
       `EXISTS (SELECT 1 FROM part_colors pc JOIN colors c ON c.id = pc.color_id
-        WHERE pc.part_num = p.part_num AND c.family = ? AND c.is_placeholder = 0)`,
+        WHERE pc.part_num = p.part_num AND LOWER(c.family) = LOWER(?) AND c.is_placeholder = 0)`,
     );
     params.push(f.colorFamily);
   }

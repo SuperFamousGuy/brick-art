@@ -12,6 +12,7 @@ import { databaseStatus } from '../lookup/status.ts';
 import { findByUse } from '../lookup/find-by-use.ts';
 import { findCompatible } from '../lookup/find-compatible.ts';
 import { findSubstitutes } from '../lookup/find-substitutes.ts';
+import { TRAITS } from '../derive/traits.ts';
 import type { ConnectionType } from '../types.ts';
 
 const CONNECTION_TYPES = [
@@ -19,11 +20,48 @@ const CONNECTION_TYPES = [
   'axle', 'axle_hole', 'ball', 'socket', 'hinge_m', 'hinge_f', 'other',
 ] as const satisfies readonly ConnectionType[];
 
+/** Family names in curated/color-families.yaml; tests/mcp/server.test.ts checks they match. */
+export const COLOR_FAMILIES = [
+  'black', 'white', 'gray', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink',
+  'brown', 'tan', 'transparent', 'metallic', 'other',
+] as const;
+
 const int = z.number().int();
 const range = z.union([int, z.tuple([int, int])]);
-const limit = int.min(1).max(200).optional();
+const limit = int.min(1).max(200).optional().describe('Maximum number of results, 1 to 200 (default 25).');
 
-const DEFAULTS = 'Incomplete parts and printed variants are excluded by default, and common parts come first.';
+const SIZE_FRAME =
+  "Measured on the part's bounding box in its own frame: studs on top are excluded, protrusions such as handles are included.";
+const familyText = `Color family, case-insensitive: one of ${COLOR_FAMILIES.join(', ')}.`;
+const partNumText = 'Rebrickable part number, such as "3001".';
+const colorText = 'Rebrickable color id (look ids up with list_colors); keeps parts known in that color.';
+
+/** Part filter fields shared by search_parts, find_by_use, and find_compatible_parts. */
+const filterFields = {
+  category: z.string().optional()
+    .describe('Exact Rebrickable part category name, case-insensitive, such as "Bricks", "Plates", or "Bricks Sloped".'),
+  width: range.optional()
+    .describe(`Width in studs: one integer or an inclusive [min, max] range. ${SIZE_FRAME} Width and depth match in either orientation.`),
+  depth: range.optional()
+    .describe(`Depth in studs: one integer or an inclusive [min, max] range. ${SIZE_FRAME}`),
+  height: range.optional()
+    .describe('Height in plates (a brick is 3 plates, studs excluded): one integer or an inclusive [min, max] range.'),
+  color: int.optional().describe(colorText),
+  colorFamily: z.string().optional().describe(`${familyText} Keeps parts known in a color of that family.`),
+  traits: z.array(z.enum(TRAITS)).optional()
+    .describe('Traits the part must all have, from a closed vocabulary derived from part names, categories, and connections.'),
+  slopeAngle: z.number().optional().describe('Slope angle in degrees, such as 45 or 33, read from the part name.'),
+  minSetCount: int.optional().describe('Minimum number of distinct sets the part appears in.'),
+  nameContains: z.string().optional().describe('Case-insensitive substring of the part name.'),
+  includeIncomplete: z.boolean().optional()
+    .describe('Include parts without complete geometry or connection data (default false).'),
+  includePrints: z.boolean().optional().describe('Include printed and patterned variants (default false).'),
+  includeNonSystem: z.boolean().optional()
+    .describe('Include parts from non-System lines such as Duplo, Modulex, and Fabuland (default false).'),
+};
+
+const DEFAULTS =
+  'Incomplete parts, printed variants, and non-System parts (such as Duplo) are excluded by default, and common parts come first.';
 
 const version = (
   JSON.parse(readFileSync(resolve(import.meta.dirname, '..', '..', 'package.json'), 'utf8')) as { version: string }
@@ -63,21 +101,7 @@ export function createServer(dataDir: string): McpServer {
     'search_parts',
     {
       description: `Returns parts matching size, category, color, trait, and name filters. ${DEFAULTS}`,
-      inputSchema: {
-        category: z.string().optional(),
-        width: range.optional(),
-        depth: range.optional(),
-        height: range.optional(),
-        color: int.optional(),
-        colorFamily: z.string().optional(),
-        traits: z.array(z.string()).optional(),
-        slopeAngle: z.number().optional(),
-        minSetCount: int.optional(),
-        nameContains: z.string().optional(),
-        includeIncomplete: z.boolean().optional(),
-        includePrints: z.boolean().optional(),
-        limit,
-      },
+      inputSchema: { ...filterFields, limit },
     },
     withDb((db, args) => searchParts(db, args)),
   );
@@ -86,7 +110,7 @@ export function createServer(dataDir: string): McpServer {
     'get_part',
     {
       description: 'Returns full detail for one part: size, geometry, connections, traits, and colors.',
-      inputSchema: { partNum: z.string() },
+      inputSchema: { partNum: z.string().describe(partNumText) },
     },
     withDb((db, args: { partNum: string }) => getPart(db, args.partNum)),
   );
@@ -95,7 +119,12 @@ export function createServer(dataDir: string): McpServer {
     'find_by_use',
     {
       description: `Returns parts that can represent a thing, such as a tree or a window; unreviewed uses are labeled "suggestion". ${DEFAULTS}`,
-      inputSchema: { represents: z.string(), color: int.optional(), colorFamily: z.string().optional(), limit },
+      inputSchema: {
+        represents: z.string()
+          .describe('The thing to represent, matched as a case-insensitive substring, such as "tree" or "window".'),
+        ...filterFields,
+        limit,
+      },
     },
     withDb((db, args) => findByUse(db, args)),
   );
@@ -105,10 +134,13 @@ export function createServer(dataDir: string): McpServer {
     {
       description: `Returns parts with a connection that mates with a connection type or with a given part's connections; give connectionType or partNum. ${DEFAULTS}`,
       inputSchema: {
-        connectionType: z.enum(CONNECTION_TYPES).optional(),
-        partNum: z.string().optional(),
-        connectionIndex: int.min(0).optional(),
-        color: int.optional(),
+        connectionType: z.enum(CONNECTION_TYPES).optional()
+          .describe('Connection type to mate with, such as "stud" or "bar"; give this or partNum.'),
+        partNum: z.string().optional()
+          .describe(`${partNumText} Finds parts that mate with its connections; give this or connectionType.`),
+        connectionIndex: int.min(0).optional()
+          .describe("Zero-based index into the part's connections as get_part lists them; omit to use all of them."),
+        ...filterFields,
         limit,
       },
     },
@@ -119,7 +151,11 @@ export function createServer(dataDir: string): McpServer {
     'find_substitutes',
     {
       description: `Returns alternates or shorter-part combinations for a part in a color it does not come in; returns nothing when the part exists in that color. ${DEFAULTS}`,
-      inputSchema: { partNum: z.string(), color: int, limit },
+      inputSchema: {
+        partNum: z.string().describe(partNumText),
+        color: int.describe('Rebrickable color id wanted (look ids up with list_colors).'),
+        limit,
+      },
     },
     withDb((db, args) => findSubstitutes(db, args)),
   );
@@ -128,7 +164,10 @@ export function createServer(dataDir: string): McpServer {
     'list_colors',
     {
       description: 'Returns real colors (placeholders excluded), optionally for one color family or the colors one part comes in.',
-      inputSchema: { family: z.string().optional(), partNum: z.string().optional() },
+      inputSchema: {
+        family: z.string().optional().describe(familyText),
+        partNum: z.string().optional().describe(`${partNumText} Lists only the colors this part comes in.`),
+      },
     },
     withDb((db, args) => listColors(db, args)),
   );

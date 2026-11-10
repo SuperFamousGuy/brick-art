@@ -1,5 +1,11 @@
 import type { ConnectionPoint } from '../types.ts';
 
+/** Every trait deriveTraits can emit: the closed vocabulary of the traits filter. */
+export const TRAITS = [
+  'curved', 'hinge', 'inverted', 'round', 'side-stud', 'slope', 'tile', 'transparent-capable', 'wedge',
+] as const;
+export type Trait = (typeof TRAITS)[number];
+
 export interface TraitInput {
   name: string;
   categoryName: string;
@@ -7,7 +13,7 @@ export interface TraitInput {
   colorsTrans: boolean[];
 }
 export interface Traits {
-  traits: string[];
+  traits: Trait[];
   slopeAngle: number | null;
   basicKind: 'brick' | 'plate' | 'tile' | null;
 }
@@ -15,7 +21,7 @@ export interface Traits {
 /** Derive searchable traits from a part's name, category, connections, and available colors. */
 export function deriveTraits(input: TraitInput): Traits {
   const { name, categoryName, connections, colorsTrans } = input;
-  const traits = new Set<string>();
+  const traits = new Set<Trait>();
 
   if (categoryName === 'Bricks Sloped' || /\bSlope[sd]?\b/.test(name)) traits.add('slope');
   if (/Inverted/.test(name)) traits.add('inverted');

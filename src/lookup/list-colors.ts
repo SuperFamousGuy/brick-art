@@ -13,7 +13,7 @@ export function listColors(db: DatabaseSync, args: { family?: string; partNum?: 
   const where = ['c.is_placeholder = 0'];
   const params: string[] = [];
   if (args.family !== undefined) {
-    where.push('c.family = ?');
+    where.push('LOWER(c.family) = LOWER(?)');
     params.push(args.family);
   }
   if (args.partNum !== undefined) {
