@@ -1,5 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import type { ConnectionPoint, Grid } from '../types.ts';
+import type { ConnectionPoint, Grid, Mat3, Vec3 } from '../types.ts';
+import type { ProjectPartRow, ProjectRow } from '../projects/sets.ts';
 
 export interface PartRow {
   partNum: string;
@@ -48,6 +49,14 @@ export interface CreativeUseRow {
 export interface SourceRow {
   name: string; url: string | null; downloadedAt: string | null; bytes: number | null;
   sha256: string | null; lastModified: string | null;
+}
+
+export interface SubmodelRow {
+  id: number; projectId: number; name: string; isMain: boolean; stepCount: number; partCount: number;
+}
+export interface PlacementRow {
+  submodelId: number; step: number; seq: number; partNum: string | null; ldrawFile: string | null;
+  ldrawColor: number; colorId: number | null; childSubmodelId: number | null; pos: Vec3; matrix: Mat3;
 }
 
 const bit = (b: boolean): number => (b ? 1 : 0);
@@ -124,6 +133,36 @@ export function writeCreativeUses(db: DatabaseSync, rows: readonly CreativeUseRo
 export function writeSources(db: DatabaseSync, rows: readonly SourceRow[]): void {
   batch(db, 'INSERT INTO sources (name, url, downloaded_at, bytes, sha256, last_modified) VALUES (' + marks(6) + ')', rows,
     (r) => [r.name, r.url, r.downloadedAt, r.bytes, r.sha256, r.lastModified]);
+}
+
+export function writeProjects(db: DatabaseSync, rows: readonly ProjectRow[]): void {
+  batch(db,
+    'INSERT INTO projects (id, source, source_key, kind, name, year, theme, parent_theme, part_count, author, license, url, has_positions, base_project_id) VALUES (' + marks(14) + ')',
+    rows, (r) => [
+      r.id, r.source, r.sourceKey, r.kind, r.name, r.year, r.theme, r.parentTheme, r.partCount,
+      r.author, r.license, r.url, bit(r.hasPositions), r.baseProjectId,
+    ]);
+}
+
+export function writeProjectParts(db: DatabaseSync, rows: readonly ProjectPartRow[]): void {
+  batch(db,
+    'INSERT INTO project_parts (project_id, part_num, color_id, quantity, is_spare, from_minifig) VALUES (' + marks(6) + ')',
+    rows, (r) => [r.projectId, r.partNum, r.colorId, r.quantity, bit(r.isSpare), bit(r.fromMinifig)]);
+}
+
+export function writeSubmodels(db: DatabaseSync, rows: readonly SubmodelRow[]): void {
+  batch(db,
+    'INSERT INTO submodels (id, project_id, name, is_main, step_count, part_count) VALUES (' + marks(6) + ')',
+    rows, (r) => [r.id, r.projectId, r.name, bit(r.isMain), r.stepCount, r.partCount]);
+}
+
+export function writePlacements(db: DatabaseSync, rows: readonly PlacementRow[]): void {
+  batch(db,
+    'INSERT INTO placements (submodel_id, step, seq, part_num, ldraw_file, ldraw_color, color_id, child_submodel_id, x, y, z, matrix) VALUES (' + marks(12) + ')',
+    rows, (r) => [
+      r.submodelId, r.step, r.seq, r.partNum, r.ldrawFile, r.ldrawColor, r.colorId, r.childSubmodelId,
+      r.pos[0], r.pos[1], r.pos[2], JSON.stringify(r.matrix),
+    ]);
 }
 
 export function writeManifest(db: DatabaseSync, entries: Record<string, string | number>): void {
