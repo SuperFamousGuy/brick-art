@@ -23,6 +23,8 @@ export function parseModel(text: string, fileName: string): ParsedModel {
   const files = new Map<string, ModelFile>();
   let main: string | null = null;
   let cur: Builder | null = null;
+  // With any `0 FILE`, lines outside FILE blocks are ignored; without one, the text is one implicit file.
+  const hasFile = /^\s*0\s+FILE\s/im.test(text);
 
   const close = (): void => {
     if (!cur) return;
@@ -46,6 +48,7 @@ export function parseModel(text: string, fileName: string): ParsedModel {
       } else if (kw === 'STEP' || kw === 'ROTSTEP') {
         if (cur) endStep(cur);
       } else if (kw === 'AUTHOR:' || kw === '!LICENSE') {
+        if (!cur && hasFile) continue;
         cur ??= newBuilder(normalizeRef(fileName));
         main ??= cur.file.name;
         const value = tok.slice(2).join(' ');
@@ -57,6 +60,7 @@ export function parseModel(text: string, fileName: string): ParsedModel {
     if (tok[0] !== '1' || tok.length < 15) continue;
     const n = tok.slice(2, 14).map(Number);
     if (n.some((v) => !Number.isFinite(v)) || !Number.isFinite(Number(tok[1]))) continue;
+    if (!cur && hasFile) continue;
     cur ??= newBuilder(normalizeRef(fileName));
     main ??= cur.file.name;
     const entry: ModelLine = {
