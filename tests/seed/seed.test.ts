@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,7 +9,11 @@ import { runSeed } from '../../src/seed/seed.ts';
 import { readState } from '../../src/seed/lock.ts';
 import { dataPaths } from '../../src/paths.ts';
 import { readPointer } from '../../src/db/open.ts';
+import type { Variant } from '../../src/projects/types.ts';
 import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
+import { MPD_BMODEL } from '../helpers/models.ts';
+import type { FakeReply } from '../helpers/models.ts';
+import { omrPages, seedFixture } from '../helpers/seeded.ts';
 
 type T = { after: (fn: () => Promise<void>) => void };
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -149,4 +153,132 @@ test('runSeed returns without work when another seed holds the lock', async (t) 
   assert.equal(r.dbFile, '');
   assert.equal(readPointer(s.dataDir), null);
   assert.equal(existsSync(dataPaths(s.dataDir).lock), true);
+});
+
+// ---- variants and project stages -----------------------------------------
+
+async function seeded(t: T, variant: Variant, omr?: Map<string, FakeReply>) {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-seeded-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const s = await seedFixture(dir, variant, omr);
+  t.after(() => s.close());
+  const db = new DatabaseSync(s.dbFile, { readOnly: true });
+  t.after(async () => db.close());
+  const manifest = Object.fromEntries(
+    (db.prepare('SELECT key, value FROM manifest').all() as { key: string; value: string }[]).map((r) => [r.key, r.value]),
+  );
+  const count = (sql: string, ...args: (string | number)[]) => (db.prepare(sql).get(...args) as { n: number }).n;
+  return { ...s, db, manifest, count };
+}
+
+test('variant fallback writes set projects without positions', async (t) => {
+  const s = await seeded(t, 'fallback');
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE kind = 'official'"), 4);
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 0);
+  assert.equal(s.manifest.variant, 'fallback');
+  assert.equal(s.manifest.placement_match_rate, '');
+  assert.equal(s.manifest.built_by, 'local');
+  assert.equal(s.manifest.count_projects_official, '4');
+  assert.equal(s.manifest.count_projects_with_positions, '0');
+  assert.equal(s.manifest.count_projects_fan, '0');
+  assert.equal(s.manifest.failed_sources, '');
+  for (const k of ['color_match_rate', 'count_models_skipped_license', 'count_omr_files_failed']) {
+    assert.ok(k in s.manifest, k);
+  }
+});
+
+test('variant standard attaches OMR positions to the set and skips unlicensed B-models', async (t) => {
+  const s = await seeded(t, 'standard');
+  const set = s.db.prepare("SELECT * FROM projects WHERE source = 'rebrickable' AND source_key = 'S1-1'")
+    .get() as Record<string, unknown>;
+  assert.equal(set.has_positions, 1);
+  assert.equal(set.author, 'Test Builder');
+  assert.match(String(set.license), /CC BY 4\.0/);
+  assert.match(String(set.url), /\/media\/omr_models\/1\/S1-1\.mpd\?v=1$/);
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels WHERE project_id = ?', set.id as number), 2);
+  assert.equal(s.count('SELECT count(*) AS n FROM placements'), 5);
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source = 'omr'"), 0);
+  assert.equal(s.manifest.variant, 'standard');
+  assert.equal(s.manifest.count_models_skipped_license, '1');
+  assert.equal(s.manifest.count_projects_fan, '0');
+  assert.equal(s.manifest.count_projects_with_positions, '1');
+  assert.equal(s.manifest.failed_sources, '');
+  // 3001 red, the Cab reference, and 3023 inheriting resolve; 9999x.dat and missing.ldr do not.
+  assert.equal(s.manifest.placement_match_rate, String(3 / 5));
+  assert.equal(s.manifest.color_match_rate, String(4 / 5));
+});
+
+test('variant standard turns licensed B-models and unknown sets into omr projects', async (t) => {
+  const pages = omrPages();
+  const licensed = MPD_BMODEL.replace('0 Author: B Builder', '0 Author: B Builder\n0 !LICENSE Licensed under CC BY 4.0');
+  pages.set('/omr/sets/1', [
+    'S1-1_B-Model.mpd', 'Z9-1.mpd',
+  ].map((n) => `<a href="/media/omr_models/1/${n}?v=1">f</a>`).join(''));
+  pages.set('/media/omr_models/1/S1-1_B-Model.mpd', licensed);
+  pages.set('/media/omr_models/1/Z9-1.mpd', licensed);
+  const s = await seeded(t, 'standard', pages);
+  const set = s.db.prepare("SELECT * FROM projects WHERE source_key = 'S1-1'").get() as Record<string, unknown>;
+  assert.equal(set.has_positions, 0);
+  const rows = s.db.prepare("SELECT * FROM projects WHERE source = 'omr' ORDER BY source_key").all() as Record<string, unknown>[];
+  assert.deepEqual(rows.map((r) => [r.source_key, r.kind, r.base_project_id, r.has_positions, r.author]), [
+    ['S1-1_B-Model.mpd', 'official', set.id, 1, 'B Builder'],
+    ['Z9-1.mpd', 'official', null, 1, 'B Builder'],
+  ]);
+  // 3001 in Dark Bluish Gray has no Rebrickable color in the fixture, so no part rows.
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 2);
+  assert.equal(s.manifest.count_models_skipped_license, '0');
+  assert.equal(s.manifest.count_projects_official, '6');
+});
+
+test('variant full adds credited fan projects', async (t) => {
+  const s = await seeded(t, 'full');
+  assert.equal(s.manifest.count_projects_fan, '1');
+  assert.equal(s.manifest.failed_sources, '');
+  const fan = s.db.prepare("SELECT * FROM projects WHERE kind = 'fan'").get() as Record<string, unknown>;
+  assert.equal(fan.source, 'fixture_fan');
+  assert.equal(fan.source_key, 'town.ldr');
+  assert.equal(fan.author, 'Mayor');
+  assert.match(String(fan.license), /CC BY 4\.0/);
+  assert.equal(fan.url, 'https://example.test/fan');
+  assert.equal(fan.has_positions, 1);
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels WHERE project_id = ?', fan.id as number), 2);
+  assert.deepEqual(
+    s.db.prepare('SELECT part_num, color_id, quantity FROM project_parts WHERE project_id = ? ORDER BY part_num')
+      .all(fan.id as number).map((r) => ({ ...r })),
+    [{ part_num: '3001', color_id: 4, quantity: 1 }, { part_num: '3023', color_id: 4, quantity: 1 }],
+  );
+  // The fan model does not count toward the OMR placement rate.
+  assert.equal(s.manifest.placement_match_rate, String(3 / 5));
+});
+
+test('an OMR outage is isolated: the seed completes with intact parts', async (t) => {
+  const s = await seeded(t, 'standard', new Map([['/omr/sets?page=1', 500]]));
+  assert.equal(s.manifest.failed_sources, 'omr');
+  assert.equal(s.manifest.count_parts, '20');
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE kind = 'official'"), 4);
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 0);
+  assert.equal(readState(dataPaths(s.dataDir).state).status, 'ready');
+  assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /omr failed/);
+});
+
+test('a part whose license is not redistributable loses its geometry', async (t) => {
+  const s = await setup(t);
+  const ldrawRoot = join(s.dir, 'ldraw-copy');
+  await cp(s.fx.ldrawRoot, ldrawRoot, { recursive: true });
+  const banana = join(ldrawRoot, 'parts', '33085.dat');
+  await writeFile(banana, (await readFile(banana, 'utf8'))
+    .replace(/^0 !LICENSE .*$/m, '0 !LICENSE Not redistributable : see NonCAreadme.txt'));
+  await runSeed({ dataDir: s.dataDir, repoRoot, refresh: false, sources: { ...s.sources, ldrawRoot } });
+  const db = open(s.dataDir);
+  t.after(async () => db.close());
+  const p = db.prepare("SELECT * FROM parts WHERE part_num = '33085'").get() as Record<string, unknown>;
+  assert.equal(p.has_geometry, 0);
+  assert.equal(p.has_grid, 0);
+  assert.equal(p.has_connections, 0);
+  assert.equal(p.is_complete, 0);
+  assert.equal(p.grid, null);
+  assert.equal(p.width_studs, null);
+  assert.equal(p.license, 'Not redistributable : see NonCAreadme.txt');
+  assert.equal((db.prepare("SELECT count(*) AS n FROM connections WHERE part_num = '33085'").get() as { n: number }).n, 0);
+  assert.equal((db.prepare("SELECT is_complete AS c FROM parts WHERE part_num = '3001'").get() as { c: number }).c, 1);
 });
