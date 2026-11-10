@@ -10,6 +10,7 @@ export interface Availability {
 
 /**
  * Count distinct sets per part and per part/color through non-spare inventory rows.
+ * Only inventories of sets listed in sets.csv count, so minifig (`fig-*`) inventories are skipped.
  * `partColors` is the union of inventory combinations and elements.
  */
 export function computeAvailability(rb: RebrickableData): Availability {
@@ -19,7 +20,7 @@ export function computeAvailability(rb: RebrickableData): Availability {
   for (const row of rb.inventoryParts) {
     if (row.isSpare) continue;
     const setNum = rb.inventories.get(row.inventoryId);
-    if (setNum === undefined) continue;
+    if (setNum === undefined || !rb.setYears.has(setNum)) continue;
     let sets = partSets.get(row.partNum);
     if (!sets) partSets.set(row.partNum, (sets = new Set()));
     sets.add(setNum);

@@ -67,6 +67,7 @@ function inventoryRows(): Row[] {
   add(3, '3622', GREEN);
   for (const inv of [1, 2, 3]) add(inv, '3023', BLACK);
   add(4, '33085', RED);
+  add(6, '33085', RED); // minifig inventory: not a set
   const listed = new Set(['3001', '3008', '3009', '3010', '3004', '3622', '3023', '33085', '99999', '003383']);
   for (const [num] of PARTS) if (!listed.has(num)) add(2, num, BLACK);
   return rows;
@@ -225,6 +226,7 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
     ]),
     inventories: toCsv(['id', 'version', 'set_num'], [
       [1, 1, 'S1-1'], [2, 1, 'S2-1'], [3, 1, 'S3-1'], [4, 1, 'S4-1'], [5, 2, 'S3-1'],
+      [6, 1, 'fig-000001'],
     ]),
     inventory_parts: toCsv(
       ['inventory_id', 'part_num', 'color_id', 'quantity', 'is_spare', 'img_url'],

@@ -41,7 +41,10 @@ test('computeAvailability counts distinct non-spare sets', () => {
   assert.equal(a.partColors.get('3001')!.get(4)!.setCount, 3);
   assert.deepEqual(a.partColors.get('3001')!.get(2), { setCount: 0, lastYear: null, inElements: true });
   assert.equal(a.partColors.get('3001')!.get(0)!.inElements, false);
+  // 33085 is also in minifig inventory fig-000001, which is not in sets.csv and does not count.
+  assert.equal(rb.inventories.get(6), 'fig-000001');
   assert.deepEqual(a.parts.get('33085'), { setCount: 1, firstYear: 1998, lastYear: 1998 });
+  assert.equal(a.partColors.get('33085')!.get(4)!.setCount, 1);
   assert.equal(a.parts.get('99999')?.firstYear ?? null, null);
 });
 
