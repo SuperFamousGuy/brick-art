@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { zipSync } from 'fflate';
 import type { Variant } from '../../src/projects/types.ts';
 import { runSeed } from '../../src/seed/seed.ts';
+import type { SeedOptions } from '../../src/seed/seed.ts';
 import { fixtureFetched, writeFixtureSources } from './fixtures.ts';
 import { MPD_10001_MINI, MPD_BMODEL, startFakeOmr } from './models.ts';
 import type { FakeReply } from './models.ts';
@@ -49,14 +50,14 @@ function fanPages(): Map<string, FakeReply> {
 }
 
 /**
- * Seeds a database from fixture sources in `dir` for `variant`. A fake server provides OMR
- * (`omrPages()` unless `omr` replaces those pages) and, for `full`, the fan sources in `fanYaml`
- * (default `FAN_SOURCES_YAML`, served by the same server), which replace the repo's curated ones.
+ * Fixture `runSeed` options for `variant` in `dir`. A fake server provides OMR (`omrPages()` unless
+ * `omr` replaces those pages) and, for `full`, the fan sources in `fanYaml` (default
+ * `FAN_SOURCES_YAML`, served by the same server), which replace the repo's curated ones.
  * Call `close()` to stop the server; `dir` is the caller's.
  */
-export async function seedFixture(
+export async function fixtureSeedOptions(
   dir: string, variant: Variant, omr?: Map<string, FakeReply>, fanYaml = FAN_SOURCES_YAML,
-): Promise<{ dataDir: string; dbFile: string; close(): Promise<void> }> {
+): Promise<{ opts: SeedOptions; close(): Promise<void> }> {
   const fx = await writeFixtureSources(join(dir, 'fx'));
   const pages = new Map<string, FakeReply>([...(omr ?? omrPages()), ...fanPages()]);
   const server = await startFakeOmr(pages);
@@ -67,15 +68,28 @@ export async function seedFixture(
       await cp(join(REPO_ROOT, 'curated'), join(repoRoot, 'curated'), { recursive: true });
       await writeFile(join(repoRoot, 'curated', 'fan-sources.yaml'), fanYaml);
     }
-    const dataDir = join(dir, 'data');
-    const result = await runSeed({
-      dataDir, repoRoot, refresh: false, sources: fixtureFetched(fx), variant,
+    const opts: SeedOptions = {
+      dataDir: join(dir, 'data'), repoRoot, refresh: false, sources: fixtureFetched(fx), variant,
       omr: { baseUrl: server.url, backoffMs: 1 },
       fanFetch: { githubApi: server.url, codeload: server.url },
-    });
-    return { dataDir, dbFile: result.dbFile, close: () => server.close() };
+    };
+    return { opts, close: () => server.close() };
   } catch (err) {
     await server.close();
+    throw err;
+  }
+}
+
+/** Seeds a database from the fixture options of `fixtureSeedOptions`. */
+export async function seedFixture(
+  dir: string, variant: Variant, omr?: Map<string, FakeReply>, fanYaml = FAN_SOURCES_YAML,
+): Promise<{ dataDir: string; dbFile: string; close(): Promise<void> }> {
+  const { opts, close } = await fixtureSeedOptions(dir, variant, omr, fanYaml);
+  try {
+    const result = await runSeed(opts);
+    return { dataDir: opts.dataDir, dbFile: result.dbFile, close };
+  } catch (err) {
+    await close();
     throw err;
   }
 }
