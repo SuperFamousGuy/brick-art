@@ -1,10 +1,15 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { zipSync } from 'fflate';
 
 export interface FixtureSources {
   dir: string;
   rebrickableDir: string;
+  ldrawRoot: string;
+  shadowRoot: string;
+  ldrawZip: string;
+  ldcadZip: string;
 }
 
 type Row = (string | number | boolean)[];
@@ -65,6 +70,122 @@ function inventoryRows(): Row[] {
   return rows;
 }
 
+// ---- LDraw and LDCad shadow fixtures -------------------------------------
+
+type Pt = [number, number, number];
+const LICENSE = '0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt';
+
+function quad(a: Pt, b: Pt, c: Pt, d: Pt): string {
+  return `4 16 ${[...a, ...b, ...c, ...d].join(' ')}`;
+}
+
+/** Six type-4 quads forming an axis-aligned box. */
+function box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): string[] {
+  return [
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]), // y0 face
+    quad([x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]), // y1 face
+    quad([x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]), // z0 face
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]), // z1 face
+    quad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]), // x0 face
+    quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]), // x1 face
+  ];
+}
+
+/** Outer box plus an inner box inset 4 LDU on the sides and from the top (y0). */
+function hollow(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): string[] {
+  return [...box(x0, y0, z0, x1, y1, z1), ...box(x0 + 4, y0 + 4, z0 + 4, x1 - 4, y1, z1 - 4)];
+}
+
+function studRef(x: number, z: number, file = 'stud.dat'): string {
+  return `1 16 ${x} 0 ${z} 1 0 0 0 1 0 0 0 1 ${file}`;
+}
+
+function ldFile(
+  desc: string, name: string, org: string, body: string[], update = '2026-10',
+): string {
+  return [
+    `0 ${desc}`, `0 Name: ${name}`, '0 Author: fixture',
+    `0 !LDRAW_ORG ${org} UPDATE ${update}`, LICENSE, '', ...body, '',
+  ].join('\n');
+}
+
+function brick1xN(n: number, stud = 'stud.dat'): string[] {
+  const w = 10 * n;
+  const studs = Array.from({ length: n }, (_, i) => studRef(-w + 10 + 20 * i, 0, stud));
+  return [...hollow(-w, 0, -10, w, 24, 10), ...studs];
+}
+
+function ldrawFixtures(): Map<string, string> {
+  const f = new Map<string, string>();
+  const part = (num: string, desc: string, body: string[], update?: string) =>
+    f.set(`parts/${num}.dat`, ldFile(desc, `${num}.dat`, 'Part', body, update));
+  f.set('p/stud.dat', ldFile('Stud', 'stud.dat', 'Primitive', box(-6, -4, -6, 6, 0, 6)));
+  f.set('p/stud2.dat', ldFile('Stud Variant', 'stud2.dat', 'Primitive', box(-6, -4, -6, 6, 0, 6)));
+  f.set('parts/s/3001s01.dat',
+    ldFile('Brick  2 x  4 Body', 's\\3001s01.dat', 'Subpart', hollow(-40, 0, -20, 40, 24, 20)));
+  const studs: string[] = [];
+  for (const x of [-30, -10, 10, 30]) for (const z of [-10, 10]) studs.push(studRef(x, z));
+  part('3001', 'Brick  2 x  4',
+    ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 S\\3001S01.DAT', ...studs]);
+  part('3008', 'Brick  1 x  8', brick1xN(8));
+  part('3009', 'Brick  1 x  6', brick1xN(6));
+  part('3010', 'Brick  1 x  4', brick1xN(4));
+  part('3622', 'Brick  1 x  3', brick1xN(3));
+  part('3004', 'Brick  1 x  2', brick1xN(2));
+  part('3005', 'Brick  1 x  1', brick1xN(1, 'stud2.dat'), '2025-03');
+  part('3023', 'Plate  1 x  2', [...box(-20, 0, -10, 20, 8, 10), studRef(-10, 0), studRef(10, 0)]);
+  part('33085', 'Banana', box(-10, 0, -30, 10, 8, 30));
+  const wedge = [
+    `3 16 -20 8 0 -20 24 -20 -20 24 0`, // x = -20 end
+    `3 16 20 8 0 20 24 0 20 24 -20`, // x = +20 end
+    quad([-20, 8, 0], [-20, 24, -20], [20, 24, -20], [20, 8, 0]), // slope
+    quad([-20, 24, -20], [-20, 24, 0], [20, 24, 0], [20, 24, -20]), // bottom
+    quad([-20, 8, 0], [20, 8, 0], [20, 24, 0], [-20, 24, 0]), // back
+  ];
+  part('3039', 'Slope Brick 45  2 x  2',
+    [...hollow(-20, 0, 0, 20, 24, 20), ...wedge, studRef(-10, 10), studRef(10, 10)]);
+  part('87087', 'Brick  1 x  1 with Stud on 1 Side', [
+    ...hollow(-10, 0, -10, 10, 24, 10), studRef(0, 0),
+    '1 16 0 12 -10 1 0 0 0 0 -1 0 1 0 stud.dat',
+  ]);
+  for (const num of ['60478', '15712', '3937', '3938']) {
+    part(num, `Fixture Part ${num}`, box(-10, 0, -10, 10, 8, 10));
+  }
+  part('99999', 'Broken Part', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\missing.dat']);
+  return f;
+}
+
+function shadowFixtures(): Map<string, string> {
+  const fgr = (g: 'F' | 'M') =>
+    `0 !LDCAD SNAP_FGR [group=hgBrC] [genderOfs=${g}] [seq=18 4 18] [radius=4] [pos=0 10 0] [ori=0 -1 0 1 0 0 0 0 1]`;
+  return new Map([
+    ['p/stud.dat', '0 !LDCAD SNAP_CYL [ID=studC] [gender=M] [caps=one] [secs=R 6 4]\n'],
+    ['parts/s/3001s01.dat',
+      '0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=R 6 20] [pos=0 24 0] [grid=C 4 C 2 20 20]\n'],
+    ['parts/3937.dat',
+      `0 !LDCAD SNAP_CYL [gender=F] [caps=one] [secs=S 6 4] [pos=0 24 0] [grid=C 2 1 20 0]\n${fgr('F')}\n`],
+    ['parts/3938.dat', `${fgr('M')}\n`],
+    ['parts/15712.dat', '0 !LDCAD SNAP_CLP [radius=4] [length=8] [pos=0 -6 0]\n'],
+    ['parts/60478.dat',
+      '0 !LDCAD SNAP_CYL [gender=M] [caps=none] [secs=R 4 16] [pos=0 4 -30] [ori=1 0 0 0 0 1 0 -1 0]\n'],
+    ['parts/33085.dat', '0 !LDCAD SNAP_CYL [gender=M] [caps=none] [secs=R 4 8] [pos=0 4 30]\n'],
+  ]);
+}
+
+async function writeTree(root: string, files: Map<string, string>): Promise<void> {
+  for (const [rel, text] of files) {
+    const path = join(root, ...rel.split('/'));
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, text);
+  }
+}
+
+function zipTree(prefix: string, files: Map<string, string>): Uint8Array {
+  const entries: Record<string, Uint8Array> = {};
+  for (const [rel, text] of files) entries[`${prefix}/${rel}`] = new TextEncoder().encode(text);
+  return zipSync(entries);
+}
+
 export async function writeFixtureSources(dir: string): Promise<FixtureSources> {
   const rebrickableDir = join(dir, 'rebrickable');
   await mkdir(rebrickableDir, { recursive: true });
@@ -109,5 +230,16 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
   for (const [name, text] of Object.entries(tables)) {
     await writeFile(join(rebrickableDir, `${name}.csv.gz`), gzipSync(text));
   }
-  return { dir, rebrickableDir };
+
+  const ldraw = ldrawFixtures();
+  const shadow = shadowFixtures();
+  const ldrawRoot = join(dir, 'ldraw');
+  const shadowRoot = join(dir, 'ldcad');
+  await writeTree(ldrawRoot, ldraw);
+  await writeTree(shadowRoot, shadow);
+  const ldrawZip = join(dir, 'complete.zip');
+  const ldcadZip = join(dir, 'ldcad.zip');
+  await writeFile(ldrawZip, zipTree('ldraw', ldraw));
+  await writeFile(ldcadZip, zipTree('LDCadShadowLibrary-abc123', shadow));
+  return { dir, rebrickableDir, ldrawRoot, shadowRoot, ldrawZip, ldcadZip };
 }
