@@ -61,7 +61,7 @@ export function gridOffsets(grid: string | undefined): Vec3[] {
   if (grid.trim() === '') throw bad('empty');
   const tokens = grid.trim().split(/\s+/);
   let i = 0;
-  const axis = (): { count: number; centered: boolean } | null => {
+  const axis = (): { count: number; centered: boolean } => {
     let centered = false;
     if (tokens[i]?.toUpperCase() === 'C') { centered = true; i++; }
     const count = Number(tokens[i++]);
