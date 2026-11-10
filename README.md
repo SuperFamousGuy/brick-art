@@ -106,8 +106,10 @@ In development, the database goes in `.data/` in the repository. Git ignores
 that folder. To build it by hand, run:
 
 ```
-bin/brick-art-seed
+node src/entry/seed.mjs
 ```
+
+On macOS and Linux, `bin/brick-art-seed` is a shortcut for the same command.
 
 ## Data sources and attribution
 

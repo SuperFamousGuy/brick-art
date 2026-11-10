@@ -42,3 +42,13 @@ test('no .mcp.json at the repo root', () => {
 test('bin/brick-art-seed is executable', { skip: process.platform === 'win32' }, () => {
   accessSync(join(root, 'bin', 'brick-art-seed'), constants.X_OK);
 });
+
+test('reseed command passes the plugin data folder to the seed', () => {
+  const text = readFileSync(join(root, 'commands', 'reseed.md'), 'utf8');
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  assert.ok(frontmatter, 'frontmatter present');
+  assert.match(frontmatter[1], /^description:\s*\S/m);
+  assert.ok(text.includes('CLAUDE_PLUGIN_DATA'));
+  assert.ok(text.includes('src/entry/seed.mjs'));
+  assert.ok(text.includes('--refresh'));
+});
