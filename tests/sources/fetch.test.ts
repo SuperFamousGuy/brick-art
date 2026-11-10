@@ -57,6 +57,7 @@ test('first call downloads all 13 sources and extracts them', async (t) => {
   assert.equal(out.ldcadCommit, 'abc123');
   assert.equal(out.rebrickableDir, s.cacheDir);
   assert.ok((await stat(join(out.ldrawRoot, 'parts', '3001.dat'))).isFile());
+  assert.ok((await stat(join(out.ldrawRoot, 'LDConfig.ldr'))).isFile());
   assert.ok((await stat(join(out.shadowRoot, 'p', 'stud.dat'))).isFile());
   assert.equal(s.requests.length, 14); // 13 downloads + commits API
   assert.ok(s.requests.every((r) => r.ua === 'brick-art-seed'));

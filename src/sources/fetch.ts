@@ -220,7 +220,7 @@ export async function fetchSources(cacheDir: string, opts: FetchOptions): Promis
 
   const ldrawRoot = await ensureExtracted(
     cacheDir, 'ldraw', join(cacheDir, 'ldraw.zip'), ldraw.sha256,
-    (p) => /^(parts|p)\//.test(p), /^ldraw\//,
+    (p) => /^(parts|p)\//.test(p) || p === 'LDConfig.ldr', /^ldraw\//,
   );
   const shadowRoot = await ensureExtracted(
     cacheDir, 'ldcad', join(cacheDir, 'ldcad.zip'), ldcad.sha256,

@@ -157,6 +157,13 @@ function ldrawFixtures(): Map<string, string> {
   part('3437', 'Duplo Brick  2 x  2',
     [...hollow(-20, 0, -20, 20, 24, 20), ...[-10, 10].flatMap((x) => [studRef(x, -10), studRef(x, 10)])]);
   part('99999', 'Broken Part', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\missing.dat']);
+  const colour = (name: string, code: number, rgb: string) =>
+    `0 !COLOUR ${name.padEnd(40)} CODE ${String(code).padStart(3)}   VALUE #${rgb}   EDGE #333333`;
+  f.set('LDConfig.ldr', [
+    '0 LDraw.org Configuration File', '',
+    colour('Black', 0, '1B2A34'), colour('Red', 4, 'C91A09'), colour('Green', 2, '237841'),
+    colour('Dark_Bluish_Grey', 72, '6C6E68'), colour('Trans_Clear', 47, 'FCFCFC'), '',
+  ].join('\n'));
   return f;
 }
 
