@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cp, mkdtemp, mkdir, rm, writeFile, appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { bootstrap, needsSeed } from '../../src/seed/bootstrap.ts';
+import { bootstrap, needsSeed, seedArgs } from '../../src/seed/bootstrap.ts';
 import { runSeed } from '../../src/seed/seed.ts';
 import { writeState } from '../../src/seed/lock.ts';
 import { dataPaths } from '../../src/paths.ts';
@@ -126,4 +126,8 @@ test('bootstrap on a ready db takes under 1000 ms', async (t) => {
   const start = performance.now();
   await bootstrap(s.dataDir, repoRoot, () => {});
   assert.ok(performance.now() - start < 1000);
+});
+
+test('the detached seed runs with a 3 GB heap', () => {
+  assert.deepEqual(seedArgs('/repo'), ['--max-old-space-size=3072', join('/repo', 'src', 'entry', 'seed.mjs')]);
 });

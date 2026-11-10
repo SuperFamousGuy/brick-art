@@ -49,6 +49,7 @@ test('reseed command passes the plugin data folder to the seed', () => {
   assert.ok(frontmatter, 'frontmatter present');
   assert.match(frontmatter[1], /^description:\s*\S/m);
   assert.ok(text.includes('CLAUDE_PLUGIN_DATA'));
-  assert.ok(text.includes('src/entry/seed.mjs'));
-  assert.ok(text.includes('--refresh'));
+  assert.ok(text.includes(
+    'BRICK_ART_DATA="${CLAUDE_PLUGIN_DATA}" node --max-old-space-size=3072 "${CLAUDE_PLUGIN_ROOT}/src/entry/seed.mjs" --refresh',
+  ));
 });

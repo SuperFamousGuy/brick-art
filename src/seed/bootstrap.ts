@@ -66,12 +66,17 @@ export async function bootstrap(dataDir: string, repoRoot: string, spawnSeed: ()
   }
 }
 
+/** Node arguments for the seed: inventory_parts needs more heap than Node's default. */
+export function seedArgs(repoRoot: string): string[] {
+  return ['--max-old-space-size=3072', join(repoRoot, 'src', 'entry', 'seed.mjs')];
+}
+
 /** Starts src/entry/seed.mjs as a detached process that logs to the data dir and outlives the session hook. */
 export function spawnDetachedSeed(dataDir: string, repoRoot: string): void {
   mkdirSync(dataDir, { recursive: true });
   const fd = openSync(dataPaths(dataDir).log, 'a');
   try {
-    const child = spawn(process.execPath, [join(repoRoot, 'src', 'entry', 'seed.mjs')], {
+    const child = spawn(process.execPath, seedArgs(repoRoot), {
       detached: true,
       stdio: ['ignore', fd, fd],
       windowsHide: true,
