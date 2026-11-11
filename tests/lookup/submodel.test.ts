@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { seedFixture } from '../helpers/seeded.ts';
-import { getSubmodel } from '../../src/lookup/get-submodel.ts';
+import { EXPANSION_LIMIT, getSubmodel } from '../../src/lookup/get-submodel.ts';
 import { databaseStatus } from '../../src/lookup/status.ts';
 import type { UpdateState } from '../../src/release/download.ts';
 import type { SeedState } from '../../src/seed/lock.ts';
@@ -136,4 +136,67 @@ test('status parses failed_sources and the placement match rate', () => {
   const t = databaseStatus(big, ready, false, update);
   assert.deepEqual(t.failedSources, []);
   assert.equal(t.placementMatchRate, null);
+});
+
+const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+interface P { part?: string | null; color?: number | null; ldraw?: number; child?: number; pos?: number[]; m?: number[] }
+function addSub(id: number, rows: P[][]): void {
+  big.prepare('INSERT INTO submodels (id, project_id, name, is_main, step_count, part_count) VALUES (?,?,?,?,?,?)')
+    .run(id, 1, `s${id}.ldr`, 0, rows.length, 0);
+  const ins = big.prepare(
+    `INSERT INTO placements (submodel_id, step, seq, part_num, ldraw_file, ldraw_color, color_id, child_submodel_id, x, y, z, matrix)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+  );
+  rows.forEach((step, si) => step.forEach((p, q) => {
+    const color = p.color === undefined ? 4 : p.color;
+    const pos = p.pos ?? [0, 0, 0];
+    ins.run(id, si + 1, q, p.child === undefined ? (p.part ?? '3001') : null, `${p.part ?? '3001'}.dat`,
+      p.ldraw ?? color ?? 16, color, p.child ?? null, pos[0]!, pos[1]!, pos[2]!, JSON.stringify(p.m ?? I));
+  }));
+}
+
+test('non-commuting parent and child matrices compose as parent times child', () => {
+  const rotY = [0, 0, 1, 0, 1, 0, -1, 0, 0];
+  const rotX = [1, 0, 0, 0, 0, -1, 0, 1, 0];
+  addSub(910001, [[{ part: '3023', pos: [1, 2, 3], m: rotX }]]);
+  addSub(910002, [[{ child: 910001, pos: [10, 20, 30], m: rotY }]]);
+  const p = getSubmodel(big, { submodelId: 910002, flatten: true })!.steps[0]!.placements[0]!;
+  assert.deepEqual(p.matrix, [0, 1, 0, 0, 0, -1, -1, 0, 0]);
+  assert.deepEqual(p.pos, [13, 22, 29]);
+});
+
+test('color 16 inherits through two levels and an explicit child color overrides', () => {
+  addSub(910011, [[{ part: '3023', color: null, ldraw: 16 }, { part: '3024', color: 1 }]]);
+  addSub(910012, [[{ child: 910011, color: null, ldraw: 16 }]]);
+  addSub(910013, [[{ child: 910012, color: 4 }]]);
+  const out = getSubmodel(big, { submodelId: 910013, flatten: true })!.steps[0]!.placements;
+  assert.equal(out.find((x) => x.partNum === '3023')!.colorId, 4);
+  assert.equal(out.find((x) => x.partNum === '3024')!.colorId, 1);
+});
+
+test('repeated child references hit the expansion budget and report truncation', () => {
+  addSub(910021, [[{ part: '3001' }]]);
+  addSub(910022, [[...Array.from({ length: 100 }, () => ({ child: 910021 }))]]);
+  addSub(910023, [[...Array.from({ length: 100 }, () => ({ child: 910022 }))], [{ part: '3001' }]]);
+  const t0 = Date.now();
+  const r = getSubmodel(big, { submodelId: 910023, flatten: true, maxPlacements: 1000 })!;
+  assert.ok(Date.now() - t0 < 2000);
+  assert.equal(r.truncated, true);
+  const total = r.steps.reduce((n, st) => n + st.placements.length, 0);
+  assert.ok(total <= EXPANSION_LIMIT);
+  assert.equal(r.steps.length, 1);
+  assert.equal(r.nextStep, 2);
+  assert.equal(getSubmodel(big, { submodelId: bigId })!.truncated, false);
+});
+
+test('nesting deeper than 32 levels reports truncation', () => {
+  addSub(920000, [[{ part: '3001' }]]);
+  for (let i = 1; i <= 34; i++) addSub(920000 + i, [[{ child: 920000 + i - 1 }]]);
+  const r = getSubmodel(big, { submodelId: 920034, flatten: true })!;
+  assert.equal(r.truncated, true);
+  assert.equal(getSubmodel(big, { submodelId: 920010, flatten: true })!.truncated, false);
+});
+
+test('a non-finite maxPlacements falls back to the default', () => {
+  assert.equal(getSubmodel(big, { submodelId: bigId, maxPlacements: NaN })!.steps.length, 15);
 });
