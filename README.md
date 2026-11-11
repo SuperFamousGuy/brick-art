@@ -43,12 +43,12 @@ Install the plugin:
 ### First run
 
 The first session after you install the plugin downloads a published parts
-database from the brick-art releases. The standard database is about a 55 MB download and takes about 205 MB on
-disk. The download takes seconds, and the lookup tools are ready as soon as it
-finishes. If the download fails, the
+database from the brick-art releases. The standard database is about a 55 MB
+download and takes about 205 MB on disk. The download takes seconds, and the
+lookup tools are ready as soon as it finishes. If the download fails, the
 plugin builds a smaller database locally from the source data. That build
-downloads about 165 MB and takes a few minutes. You can keep working while
-it runs. Until a database is ready, the lookup tools report "not ready".
+downloads about 165 MB and takes a few minutes. You can keep working while it
+runs. Until a database is ready, the lookup tools report "not ready".
 
 The plugin asks one question at install: **Download fan-made designs**. The
 default is off. When you turn it on, the database also includes community
@@ -60,7 +60,7 @@ uninstall the plugin.
 
 ## Lookup tools
 
-Claude uses these tools to choose real parts:
+Claude uses these tools to choose real parts and to find existing designs:
 
 | Tool | Purpose |
 | --- | --- |
@@ -70,10 +70,14 @@ Claude uses these tools to choose real parts:
 | `find_compatible_parts` | Find parts that connect to a given part. |
 | `find_substitutes` | Find alternates for a part in a color it does not come in. |
 | `list_colors` | List the available colors. |
+| `search_projects` | Search official sets and fan models by name, theme, year, kind, size, or part. Projects with build positions come first. |
+| `get_project` | Get one project's parts with colors and quantities, and its sub-assemblies. |
+| `get_submodel` | Get the placed parts of one sub-assembly step by step, with colors, positions, and rotations. |
 | `database_status` | Check whether the database is ready, when it was built, and its source versions. |
 
-Default lookups skip incomplete parts, printed variants, and placeholder
-colors.
+Default part lookups skip incomplete parts, printed variants, and placeholder
+colors. Project results carry the author, license, and URL of each model, so
+Claude can credit them.
 
 ## Refresh the data
 
@@ -141,7 +145,7 @@ brick-art builds its database from these sources:
   [LDraw Official Model Repository (OMR)](https://library.ldraw.org/omr)
   and its authors. Only models with an open license are used. Each author is
   credited in `CREDITS.md`.
-- Fan-made designs from [Datsville](https://github.com/Datsville), when you
+- Fan-made designs from [Datsville](https://github.com/mjhorvath/Datsville), when you
   turn on the fan-made option.
 
 ### Database license

@@ -472,7 +472,7 @@ New manifest keys: `variant`, `built_by` (`ci`/`local`), `placement_match_rate`,
     }
   }
   ```
-  `N` stays literally `N` until Task 14 measures it.
+  Task 14 measured the fan-made download at 8 MB, and `N` is now `8`.
 - `commands/reseed.md`: with no arguments, it runs `update.mjs --force` in the background and then reports `database_status`. With `--local`, it runs `seed.mjs --refresh --variant <standard|full from options.json>`. Keep the `BRICK_ART_DATA="${CLAUDE_PLUGIN_DATA}"` prefix and `run_in_background`.
 
 - [ ] **Step 1: Write failing tests**:
