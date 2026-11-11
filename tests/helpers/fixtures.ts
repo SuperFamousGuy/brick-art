@@ -157,6 +157,22 @@ function ldrawFixtures(): Map<string, string> {
   part('3437', 'Duplo Brick  2 x  2',
     [...hollow(-20, 0, -20, 20, 24, 20), ...[-10, 10].flatMap((x) => [studRef(x, -10), studRef(x, 10)])]);
   part('99999', 'Broken Part', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\missing.dat']);
+  // Placement kinds: a primitive, a flexible segment, and a `~Moved to` alias with no Rebrickable row.
+  f.set('p/4-4cyli.dat', ldFile('Cylinder 1.0', '4-4cyli.dat', 'Primitive', box(-10, 0, -10, 10, 1, 10)));
+  part('77', '~Technic Flex-System Hose Segment', box(-2, 0, -2, 2, 2, 2));
+  f.set('parts/166.dat', ldFile('~Moved to 3001', '166.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat']));
+  // A variant file with no Rebrickable part of its own: it maps to Rebrickable 3023 by suffix.
+  part('3023b', 'Plate  1 x  2 without Bottom Tube', box(-20, 0, -10, 20, 8, 10));
+  // Variant-named alias and sub-part: neither is suffix-matched to 3001.
+  f.set('parts/3001x.dat', ldFile('~Moved to 166', '3001x.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 166.dat']));
+  part('3001y', '~Brick  2 x  4 Shell', box(-20, 0, -10, 20, 24, 10));
+  const colour = (name: string, code: number, rgb: string) =>
+    `0 !COLOUR ${name.padEnd(40)} CODE ${String(code).padStart(3)}   VALUE #${rgb}   EDGE #333333`;
+  f.set('LDConfig.ldr', [
+    '0 LDraw.org Configuration File', '',
+    colour('Black', 0, '1B2A34'), colour('Red', 4, 'C91A09'), colour('Green', 2, '237841'),
+    colour('Dark_Bluish_Grey', 72, '6C6E68'), colour('Trans_Clear', 47, 'FCFCFC'), '',
+  ].join('\n'));
   return f;
 }
 
@@ -228,6 +244,9 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
       [1, 1, 'S1-1'], [2, 1, 'S2-1'], [3, 1, 'S3-1'], [4, 1, 'S4-1'], [5, 2, 'S3-1'],
       [6, 1, 'fig-000001'],
     ]),
+    themes: toCsv(['id', 'name', 'parent_id'], [[1, 'Harbor', 2], [2, 'Town', '']]),
+    inventory_minifigs: toCsv(['inventory_id', 'fig_num', 'quantity'], [[1, 'fig-000001', 2]]),
+    minifigs: toCsv(['fig_num', 'name', 'num_parts', 'img_url'], [['fig-000001', 'Fixture Fig', 1, '']]),
     inventory_parts: toCsv(
       ['inventory_id', 'part_num', 'color_id', 'quantity', 'is_spare', 'img_url'],
       inventoryRows(),
@@ -252,7 +271,8 @@ export async function writeFixtureSources(dir: string): Promise<FixtureSources> 
 
 const SOURCE_NAMES = [
   'parts', 'part_categories', 'part_relationships', 'colors', 'elements',
-  'inventory_parts', 'inventories', 'sets', 'ldraw', 'ldcad',
+  'inventory_parts', 'inventories', 'sets', 'themes', 'inventory_minifigs', 'minifigs',
+  'ldraw', 'ldcad',
 ];
 
 /** Prebuilt `FetchedSources` pointing at the fixture trees, with synthetic source records. */

@@ -32,7 +32,10 @@ For each prompt, produce all three of these:
 
 The parts database and lookup tools exist: a local database of real parts,
 colors, and connection geometry, exposed to Claude through an MCP server. The
-model representation, the instruction format, and the rendering approach are
+database also holds projects (official sets, OMR positions and build steps,
+and optional fan designs), with search and sub-model tools. CI publishes the
+database as a GitHub release, and the plugin downloads it. The model
+representation, the instruction format, and the rendering approach are
 still open.
 
 The plugin packaging is in `.claude-plugin/`. Opening this repo directly in

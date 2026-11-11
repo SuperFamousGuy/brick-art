@@ -12,6 +12,7 @@ import { parse } from 'yaml';
 import { COLOR_FAMILIES, createServer } from '../../src/mcp/server.ts';
 import { acquireLock, releaseLock, writeState } from '../../src/seed/lock.ts';
 import { dataPaths } from '../../src/paths.ts';
+import { seedFixture } from '../helpers/seeded.ts';
 import { TRAITS } from '../../src/derive/traits.ts';
 
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -43,12 +44,12 @@ async function connect(dataDir: string) {
 
 const textOf = (r: unknown): string => (r as { content: { text: string }[] }).content[0]!.text;
 
-test('listTools returns the seven tools', async () => {
+test('listTools returns the ten tools', async () => {
   const { client, close } = await connect(join(tmp, 'empty'));
   const { tools } = await client.listTools();
   assert.deepEqual(
     tools.map((t) => t.name).sort(),
-    ['database_status', 'find_by_use', 'find_compatible_parts', 'find_substitutes', 'get_part', 'list_colors', 'search_parts'],
+    ['database_status', 'find_by_use', 'find_compatible_parts', 'find_substitutes', 'get_part', 'get_project', 'get_submodel', 'list_colors', 'search_parts', 'search_projects'],
   );
   await close();
 });
@@ -143,4 +144,37 @@ test('database_status reports seeding only while the seed lock is held', async (
   assert.equal(await status(), 'seeding');
   releaseLock(paths.lock);
   await close();
+});
+
+test('project tools work on a seeded standard database and report unknown ids', async () => {
+  const dir = join(tmp, 'projects');
+  const seeded = await seedFixture(dir, 'standard');
+  try {
+    const { client, close } = await connect(seeded.dataDir);
+    const found = JSON.parse(textOf(await client.callTool({ name: 'search_projects', arguments: { usesPart: '3001', usesColor: 4 } })));
+    assert.equal(found.results[0].sourceKey, 'S1-1');
+    assert.equal(found.note, null);
+    const one = JSON.parse(textOf(await client.callTool({ name: 'get_project', arguments: { id: found.results[0].id } })));
+    assert.equal(one.submodels.length, 2);
+    const missing = await client.callTool({ name: 'get_project', arguments: { id: 999999 } });
+    assert.equal(missing.isError, true);
+    assert.equal(textOf(missing), 'No project with id 999999.');
+    const sub = JSON.parse(textOf(await client.callTool({ name: 'get_submodel', arguments: { submodelId: one.submodels[0].id, flatten: true } })));
+    assert.equal(sub.steps.length, 2);
+    const noSub = await client.callTool({ name: 'get_submodel', arguments: { submodelId: 999999 } });
+    assert.equal(noSub.isError, true);
+    assert.equal(textOf(noSub), 'No sub-assembly with id 999999.');
+    const { tools } = await client.listTools();
+    assert.match(tools.find((x) => x.name === 'get_submodel')!.description ?? '', /LDraw units.*origin/);
+    for (const name of ['search_projects', 'get_project']) {
+      const t = tools.find((x) => x.name === name)!;
+      assert.match(t.description ?? '', /author, license, and URL/);
+    }
+    const search = tools.find((x) => x.name === 'search_projects')!.description ?? '';
+    assert.match(search, /part count/);
+    assert.doesNotMatch(search, /\bsize\b/);
+    await close();
+  } finally {
+    await seeded.close();
+  }
 });

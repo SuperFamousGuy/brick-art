@@ -10,10 +10,10 @@ if (!isSupportedNode()) {
 } else {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   try {
-    const { bootstrap, spawnDetachedSeed } = await import('../seed/bootstrap.ts');
+    const { bootstrap, spawnDetachedUpdate } = await import('../seed/bootstrap.ts');
     const { resolveDataDir } = await import('../paths.ts');
     const dataDir = resolveDataDir(process.env, repoRoot);
-    console.log(await bootstrap(dataDir, repoRoot, () => spawnDetachedSeed(dataDir, repoRoot)));
+    console.log(await bootstrap(dataDir, repoRoot, process.env, (variant) => spawnDetachedUpdate(dataDir, repoRoot, variant)));
   } catch (err) {
     console.log(`brick-art: setup check failed: ${err instanceof Error ? err.message : String(err)}`);
   }

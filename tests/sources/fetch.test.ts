@@ -49,16 +49,17 @@ async function setup(t: After, failParts = false) {
   return { dir, cacheDir: join(dir, 'cache'), requests, baseUrls, state, src };
 }
 
-test('first call downloads all 10 sources and extracts them', async (t) => {
+test('first call downloads all 13 sources and extracts them', async (t) => {
   const s = await setup(t);
   const out = await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
-  assert.equal(out.records.length, 10);
+  assert.equal(out.records.length, 13);
   for (const r of out.records) assert.match(r.sha256, /^[0-9a-f]{64}$/);
   assert.equal(out.ldcadCommit, 'abc123');
   assert.equal(out.rebrickableDir, s.cacheDir);
   assert.ok((await stat(join(out.ldrawRoot, 'parts', '3001.dat'))).isFile());
+  assert.ok((await stat(join(out.ldrawRoot, 'LDConfig.ldr'))).isFile());
   assert.ok((await stat(join(out.shadowRoot, 'p', 'stud.dat'))).isFile());
-  assert.equal(s.requests.length, 11); // 10 downloads + commits API
+  assert.equal(s.requests.length, 14); // 13 downloads + commits API
   assert.ok(s.requests.every((r) => r.ua === 'brick-art-seed'));
   assert.equal(s.requests.find((r) => r.url === '/commits/main')?.accept, 'application/vnd.github+json');
   const meta = JSON.parse(await readFile(join(s.cacheDir, 'parts.meta.json'), 'utf8'));
@@ -77,12 +78,26 @@ test('second call within maxAgeHours makes zero requests', async (t) => {
   assert.deepEqual(second.records, first.records);
 });
 
+test('an old-style extraction without LDConfig.ldr is replaced', async (t) => {
+  const s = await setup(t);
+  const first = await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
+  const sha = first.records.find((r) => r.name === 'ldraw')!.sha256;
+  const oldDir = join(s.cacheDir, 'extract', `ldraw-${sha}`);
+  await rm(first.ldrawRoot, { recursive: true, force: true });
+  await mkdir(join(oldDir, 'parts'), { recursive: true });
+  await writeFile(join(oldDir, 'parts', '3001.dat'), 'old');
+  const out = await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
+  assert.ok((await stat(join(out.ldrawRoot, 'LDConfig.ldr'))).isFile());
+  assert.notEqual(out.ldrawRoot, oldDir);
+  await assert.rejects(stat(oldDir));
+});
+
 test('refresh: true downloads again', async (t) => {
   const s = await setup(t);
   await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
   s.requests.length = 0;
   const out = await fetchSources(s.cacheDir, { refresh: true, maxAgeHours: 24, baseUrls: s.baseUrls });
-  assert.equal(s.requests.length, 11); // 10 downloads + commits API
+  assert.equal(s.requests.length, 14); // 13 downloads + commits API
   assert.ok((await stat(join(out.ldrawRoot, 'parts', '3001.dat'))).isFile());
 });
 
@@ -91,7 +106,7 @@ test('stale cache (maxAgeHours 0) downloads again', async (t) => {
   await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 24, baseUrls: s.baseUrls });
   s.requests.length = 0;
   await fetchSources(s.cacheDir, { refresh: false, maxAgeHours: 0, baseUrls: s.baseUrls });
-  assert.equal(s.requests.length, 11); // 10 downloads + commits API
+  assert.equal(s.requests.length, 14); // 13 downloads + commits API
 });
 
 test('HTTP 500 rejects, removes .part, and keeps the previous cached file', async (t) => {

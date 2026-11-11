@@ -42,3 +42,27 @@ test('loadRebrickable rejects a table missing a required column', async (t) => {
   await writeFile(join(rebrickableDir, 'sets.csv.gz'), gzipSync('set_num,name\n'));
   await assert.rejects(loadRebrickable(rebrickableDir), { message: 'sets.csv missing column year' });
 });
+
+test('loadRebrickable loads sets, themes, versions, and minifigs', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-rb-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const { rebrickableDir } = await writeFixtureSources(dir);
+  const data = await loadRebrickable(rebrickableDir);
+
+  assert.deepEqual(data.sets.get('S1-1'), { name: 'Set One', year: 2020, themeId: 1, numParts: 10 });
+  assert.deepEqual(data.themes.get(1), { name: 'Harbor', parentId: 2 });
+  assert.equal(data.themes.get(2)?.parentId, null);
+  assert.equal(data.inventoryVersions.get(5), 2);
+  assert.ok(data.inventoryParts.length > 0);
+  assert.ok(data.inventoryParts.every((r) => r.quantity === 1));
+  assert.deepEqual(data.inventoryMinifigs, [{ inventoryId: 1, figNum: 'fig-000001', quantity: 2 }]);
+  assert.equal(data.minifigNames.get('fig-000001'), 'Fixture Fig');
+});
+
+test('loadRebrickable rejects a themes table without parent_id', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'brick-art-rb-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const { rebrickableDir } = await writeFixtureSources(dir);
+  await writeFile(join(rebrickableDir, 'themes.csv.gz'), gzipSync('id,name\n1,Harbor\n'));
+  await assert.rejects(loadRebrickable(rebrickableDir), { message: 'themes.csv missing column parent_id' });
+});

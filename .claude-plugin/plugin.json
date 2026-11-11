@@ -14,5 +14,13 @@
         "BRICK_ART_DATA": "${CLAUDE_PLUGIN_DATA}"
       }
     }
+  },
+  "userConfig": {
+    "fan_projects": {
+      "type": "boolean",
+      "title": "Download fan-made designs",
+      "description": "Adds community designs from brick-art's curated list, with positions and build steps. Adds about 8 MB to the download.",
+      "default": false
+    }
   }
 }

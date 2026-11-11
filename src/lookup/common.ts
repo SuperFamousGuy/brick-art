@@ -41,7 +41,7 @@ export function clampLimit(limit?: number): number {
   return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(limit)));
 }
 
-const bounds = (r: Range): [number, number] => (typeof r === 'number' ? [r, r] : r);
+export const bounds = (r: Range): [number, number] => (typeof r === 'number' ? [r, r] : r);
 
 /** SQL fragment matching `col` inside the inclusive range, pushing params. */
 function inRange(col: string, r: Range, params: (string | number)[]): string {

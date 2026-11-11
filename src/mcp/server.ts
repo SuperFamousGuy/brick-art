@@ -11,6 +11,10 @@ import { listColors } from '../lookup/list-colors.ts';
 import { databaseStatus } from '../lookup/status.ts';
 import { findByUse } from '../lookup/find-by-use.ts';
 import { findCompatible } from '../lookup/find-compatible.ts';
+import { searchProjects } from '../lookup/search-projects.ts';
+import { getProject } from '../lookup/get-project.ts';
+import { getSubmodel } from '../lookup/get-submodel.ts';
+import { readUpdateState } from '../release/download.ts';
 import { findSubstitutes } from '../lookup/find-substitutes.ts';
 import { TRAITS } from '../derive/traits.ts';
 import type { ConnectionType } from '../types.ts';
@@ -79,18 +83,20 @@ export function createServer(dataDir: string): McpServer {
   const server = new McpServer({ name: 'brick-art-parts', version });
   server.server.onclose = () => current.close();
 
+  const notReady = (): ToolResult => {
+    const state = readState(statePath);
+    return fail(
+      `Parts database is not ready (${state.status}). ${state.lastError ?? 'Seeding runs in the background; try again in a few minutes.'}`,
+    );
+  };
+
   /** Wraps a lookup: not-ready and thrown errors become isError results. */
   const withDb =
     <A>(run: (db: NonNullable<ReturnType<CurrentDb['get']>>, args: A) => unknown) =>
     (args: A): ToolResult => {
       try {
         const db = current.get();
-        if (db === null) {
-          const state = readState(statePath);
-          return fail(
-            `Parts database is not ready (${state.status}). ${state.lastError ?? 'Seeding runs in the background; try again in a few minutes.'}`,
-          );
-        }
+        if (db === null) return notReady();
         return ok(run(db, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
@@ -172,6 +178,73 @@ export function createServer(dataDir: string): McpServer {
     withDb((db, args) => listColors(db, args)),
   );
 
+  const CREDIT = 'Every result carries its author, license, and URL; credit them when you use the model.';
+
+  server.registerTool(
+    'search_projects',
+    {
+      description: `Returns existing projects (official LEGO sets and fan models) matching name, theme, year, kind, part count, and part filters; projects with build positions come first. ${CREDIT}`,
+      inputSchema: {
+        nameContains: z.string().optional()
+          .describe('Case-insensitive substring of the project name; an exact name match ranks first.'),
+        theme: z.string().optional().describe('Theme or parent theme name, case-insensitive, such as "Town".'),
+        year: range.optional().describe('Release year: one integer or an inclusive [min, max] range.'),
+        kind: z.enum(['official', 'fan']).optional().describe('"official" for LEGO sets, "fan" for fan models.'),
+        partCount: range.optional().describe('Total part count: one integer or an inclusive [min, max] range.'),
+        usesPart: z.string().optional().describe(`${partNumText} Keeps projects that contain this part.`),
+        usesColor: int.optional()
+          .describe('Rebrickable color id; keeps projects containing the part in that color, or any part in it when usesPart is omitted.'),
+        hasPositions: z.boolean().optional()
+          .describe('true keeps only projects with build positions; false keeps only those without.'),
+        limit,
+      },
+    },
+    withDb((db, args) => searchProjects(db, args)),
+  );
+
+  server.registerTool(
+    'get_project',
+    {
+      description: `Returns full detail for one project: every model author, parts with colors and quantities, and its submodels. ${CREDIT}`,
+      inputSchema: { id: int.describe('Project id from search_projects.') },
+    },
+    (args: { id: number }): ToolResult => {
+      try {
+        const db = current.get();
+        if (db === null) return notReady();
+        const project = getProject(db, args.id);
+        return project === null ? fail(`No project with id ${args.id}.`) : ok(project);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_submodel',
+    {
+      description: `Returns the placed parts of one sub-assembly step by step (part, color, position, and rotation matrix); each placement's kind is part, submodel, primitive, segment, or unmatched. Transforms are in LDraw units (stud 20, plate 8, y axis down) and relative to the requested sub-assembly's origin. Steps come back whole, up to maxPlacements; continue from nextStep. Results may be truncated when expansion is very large or deeply nested; check "truncated". ${CREDIT}`,
+      inputSchema: {
+        submodelId: int.describe('Sub-assembly id from get_project.'),
+        flatten: z.boolean().optional()
+          .describe('Expand child sub-assemblies in place, at their parent step, with composed transforms and inherited colors (default false).'),
+        fromStep: int.min(1).optional().describe('First step to return (default 1).'),
+        maxPlacements: int.min(1).max(1000).optional()
+          .describe('Maximum placements to return across whole steps (default 300, at most 1000); a first step over the cap is still returned.'),
+      },
+    },
+    (args: { submodelId: number; flatten?: boolean; fromStep?: number; maxPlacements?: number }): ToolResult => {
+      try {
+        const db = current.get();
+        if (db === null) return notReady();
+        const result = getSubmodel(db, args);
+        return result === null ? fail(`No sub-assembly with id ${args.submodelId}.`) : ok(result);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
   server.registerTool(
     'database_status',
     {
@@ -180,7 +253,7 @@ export function createServer(dataDir: string): McpServer {
     },
     (): ToolResult => {
       try {
-        return ok(databaseStatus(current.get(), readState(statePath), isLockHeld(lockPath)));
+        return ok(databaseStatus(current.get(), readState(statePath), isLockHeld(lockPath), readUpdateState(dataDir)));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

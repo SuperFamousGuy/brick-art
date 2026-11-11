@@ -8,6 +8,7 @@ import { createSchema, SEED_VERSION } from '../../src/db/schema.ts';
 import {
   writeManifest, writeParts, writePart, writeConnections, writeTraits, writeColors,
   writePartColors, writeRelationships, writeCreativeUses, writeSources,
+  writeProjects, writeProjectParts, writeSubmodels, writePlacements,
 } from '../../src/db/write.ts';
 import type { PartRow } from '../../src/db/write.ts';
 import { CurrentDb, readPointer, writePointer } from '../../src/db/open.ts';
@@ -38,20 +39,21 @@ const part = (n: string, over: Partial<PartRow> = {}): PartRow => ({
   basePartNum: null, isSystem: true, ...over,
 });
 
-test('createSchema creates all 10 tables and symmetric compat rows', () => {
+test('createSchema creates all 15 tables and symmetric compat rows', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   assert.deepEqual(names(db, 'table'), [
     'colors', 'connection_compat', 'connections', 'creative_uses', 'manifest',
-    'part_colors', 'part_relationships', 'part_traits', 'parts', 'sources',
+    'part_colors', 'part_relationships', 'part_traits', 'parts', 'placements',
+    'project_authors', 'project_parts', 'projects', 'sources', 'submodels',
   ]);
-  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 6);
+  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 13);
   const has = (a: string, b: string) =>
     db.prepare('SELECT 1 AS x FROM connection_compat WHERE a = ? AND b = ?').get(a, b) !== undefined;
   assert.ok(has('stud', 'stud_receptor') && has('stud_receptor', 'stud'));
   assert.ok(has('axle', 'pin_hole') && has('pin_hole', 'axle'));
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM connection_compat').get() as { n: number }).n, 16);
-  assert.equal(SEED_VERSION, 2);
+  assert.equal(SEED_VERSION, 3);
   db.close();
 });
 
@@ -139,4 +141,35 @@ test('CurrentDb follows the pointer and closes the old handle', async () => {
   assert.deepEqual((await readdir(d)).filter((f) => f.endsWith('.tmp')), []);
   cur.close();
   assert.throws(() => b.prepare('SELECT 1'));
+});
+
+test('project writers store rows and round-trip the matrix', () => {
+  const db = new DatabaseSync(':memory:');
+  createSchema(db);
+  const project = {
+    id: 1, source: 'rebrickable', sourceKey: '10001-1', kind: 'official' as const, name: 'Set', year: 2020,
+    theme: 'City', parentTheme: null, partCount: 5, author: null, license: null, url: null,
+    hasPositions: true, baseProjectId: null,
+  };
+  writeProjects(db, [project]);
+  writeProjectParts(db, [{ projectId: 1, partNum: '3001', colorId: 4, quantity: 2, isSpare: false, fromMinifig: true }]);
+  writeSubmodels(db, [{ id: 7, projectId: 1, name: 'main.ldr', isMain: true, stepCount: 3, partCount: 5 }]);
+  const matrix = [0, 0, 1, 0, 1, 0, -1, 0, 0] as const;
+  writePlacements(db, [{
+    submodelId: 7, step: 1, seq: 2, partNum: '3001', ldrawFile: '3001.dat', ldrawColor: 16, colorId: null,
+    childSubmodelId: null, refKind: 'part', pos: [10, -24, 30], matrix: [...matrix] as never,
+  }]);
+  const p = db.prepare('SELECT * FROM projects').get() as Record<string, unknown>;
+  assert.equal(p.source_key, '10001-1');
+  assert.equal(p.has_positions, 1);
+  assert.equal(p.base_project_id, null);
+  const pp = db.prepare('SELECT * FROM project_parts').get() as Record<string, unknown>;
+  assert.deepEqual([pp.quantity, pp.is_spare, pp.from_minifig], [2, 0, 1]);
+  const sm = db.prepare('SELECT * FROM submodels').get() as Record<string, unknown>;
+  assert.deepEqual([sm.id, sm.is_main, sm.step_count, sm.part_count], [7, 1, 3, 5]);
+  const pl = db.prepare('SELECT * FROM placements').get() as Record<string, unknown>;
+  assert.deepEqual([pl.x, pl.y, pl.z, pl.color_id, pl.child_submodel_id, pl.ref_kind], [10, -24, 30, null, null, 'part']);
+  assert.deepEqual(JSON.parse(pl.matrix as string), matrix);
+  assert.throws(() => writeProjects(db, [{ ...project, id: 2 }]), /UNIQUE/);
+  db.close();
 });

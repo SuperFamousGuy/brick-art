@@ -1,15 +1,17 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, join } from 'node:path';
 import { curatedDir, loadCurated, validateUses } from '../curated/load.ts';
-import type { CreativeUse } from '../curated/load.ts';
+import type { CreativeUse, FanSource } from '../curated/load.ts';
 import { SEED_VERSION, createSchema } from '../db/schema.ts';
 import { readPointer, writePointer } from '../db/open.ts';
 import {
   writeColors, writeConnections, writeCreativeUses, writeManifest, writeParts, writePartColors,
-  writeRelationships, writeSources, writeTraits,
+  writePlacements, writeProjectAuthors, writeProjectParts, writeProjects, writeRelationships, writeSources, writeSubmodels, writeTraits,
 } from '../db/write.ts';
-import type { ConnectionRow, PartColorRow, PartRow, TraitRow } from '../db/write.ts';
+import type {
+  ConnectionRow, PartColorRow, PartRow, PlacementRow, ProjectAuthorRow, SubmodelRow, TraitRow,
+} from '../db/write.ts';
 import { computeAvailability } from '../derive/availability.ts';
 import { matchParts, matchRateTop } from '../derive/match.ts';
 import { isSystemPart } from '../derive/system.ts';
@@ -18,10 +20,24 @@ import { LDrawLibrary } from '../ldraw/library.ts';
 import { resolvePart } from '../ldraw/resolve.ts';
 import { computeShape } from '../ldraw/shape.ts';
 import { dataPaths } from '../paths.ts';
+import { assembleProject } from '../projects/assemble.ts';
+import { refClassifier } from '../projects/classify.ts';
+import type { RefClassifier } from '../projects/classify.ts';
+import type { AssembledProject, AssemblyStats } from '../projects/assemble.ts';
+import { buildColorMap, buildPartMap } from '../projects/colors.ts';
+import { licenseAllowed } from '../projects/license.ts';
+import { parseModel } from '../projects/mpd.ts';
+import { buildSetProjects } from '../projects/sets.ts';
+import type { ProjectPartRow, ProjectRow } from '../projects/sets.ts';
+import type { Variant } from '../projects/types.ts';
+import { buildFanProjects, fetchFanSource } from '../sources/fan.ts';
+import type { FanFetchOptions } from '../sources/fan.ts';
 import { fetchSources } from '../sources/fetch.ts';
 import type { FetchedSources } from '../sources/fetch.ts';
+import { fetchOmr } from '../sources/omr.ts';
+import type { OmrFile } from '../sources/omr.ts';
 import { loadRebrickable } from '../sources/rebrickable.ts';
-import type { RbPart } from '../sources/rebrickable.ts';
+import type { RbPart, RebrickableData } from '../sources/rebrickable.ts';
 import { acquireLock, readState, releaseLock, writeState } from './lock.ts';
 
 export interface SeedOptions {
@@ -30,6 +46,16 @@ export interface SeedOptions {
   refresh: boolean;
   sources?: FetchedSources;
   now?: () => Date;
+  /** Which projects to include. Default `'fallback'`: set parts lists only. */
+  variant?: Variant;
+  /** Who built the database, recorded in the manifest. Default `'local'`. */
+  builtBy?: 'ci' | 'local';
+  /** Test hooks: OMR base URL and retry backoff, or a ready file list that skips fetching. */
+  omr?: { baseUrl?: string; backoffMs?: number; files?: OmrFile[] };
+  /** Test hooks: GitHub API and codeload base URLs for fan sources. */
+  fanFetch?: Pick<FanFetchOptions, 'githubApi' | 'codeload'>;
+  /** Neither acquire nor release the seed lock: the caller (the updater) already holds it. */
+  skipLock?: boolean;
 }
 export interface SeedResult {
   /** Absolute path of the new database; empty when another seed already holds the lock. */
@@ -40,6 +66,7 @@ export interface SeedResult {
 const CACHE_MAX_AGE_HOURS = 24;
 const FLUSH_EVERY = 500;
 const PLACEHOLDER_COLORS = new Set([-1, 9999]);
+const PLACEMENT_FLUSH_EVERY = 5000;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 function stampOf(d: Date): string {
@@ -47,7 +74,8 @@ function stampOf(d: Date): string {
     `T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
 }
 
-function uniqueDbFile(dataDir: string, start: Date): string {
+/** A `parts-<UTC stamp>.db` path in `dataDir` that does not exist yet. */
+export function uniqueDbFile(dataDir: string, start: Date): string {
   const paths = dataPaths(dataDir);
   const d = new Date(start);
   while (existsSync(paths.dbFile(stampOf(d)))) d.setUTCSeconds(d.getUTCSeconds() + 1);
@@ -60,7 +88,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
   mkdirSync(opts.dataDir, { recursive: true });
   const log = (msg: string) => appendFileSync(paths.log, `${now().toISOString()} ${msg}\n`);
 
-  if (!acquireLock(paths.lock)) {
+  if (!opts.skipLock && !acquireLock(paths.lock)) {
     log('seed already running; skipping');
     return { dbFile: '', counts: {} };
   }
@@ -173,8 +201,11 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
 
     for (const [file, group] of byFile) {
       const resolved = resolvePart(lib, file);
-      const shape = computeShape(resolved.bodyTriangles);
-      const connections = resolved.connections;
+      // A part we may not redistribute keeps its license but none of its geometry.
+      const licensed = licenseAllowed(resolved.license);
+      if (!licensed) log(`${file}: license not allowed, geometry removed (${resolved.license ?? 'none'})`);
+      const shape = licensed ? computeShape(resolved.bodyTriangles) : null;
+      const connections = licensed ? resolved.connections : [];
       const hasConnections = connections.length > 0;
       const isComplete = shape !== null && hasConnections &&
         resolved.missingRefs.length === 0 && resolved.errors.length === 0 && !resolved.cyclic;
@@ -231,6 +262,14 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
       sha256: r.sha256, lastModified: r.lastModified,
     })));
 
+    const projects = await writeProjectStages(db, {
+      opts, rb, sources, lib, fanSources: curated.fanSources, log, cacheDir: paths.cacheDir,
+      partMapInput: rb.parts.map((p) => {
+        const m = matches.get(p.partNum);
+        return { partNum: p.partNum, ldrawFile: m?.ldrawFile ?? null, geometryFrom: m?.geometryFrom ?? null };
+      }),
+    });
+
     const finishedAt = now().toISOString();
     writeManifest(db, {
       seed_version: SEED_VERSION,
@@ -245,6 +284,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
       count_incomplete: nIncomplete,
       count_creative_loaded: accepted.length,
       count_creative_rejected: rejected.length,
+      ...projects,
     });
     db.close();
     db = null;
@@ -290,11 +330,294 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     } catch { /* ignore */ }
     throw err;
   } finally {
-    try { releaseLock(paths.lock); } catch { /* ignore */ }
+    if (!opts.skipLock) {
+      try { releaseLock(paths.lock); } catch { /* ignore */ }
+    }
   }
 }
 
 function readPointerPath(dataDir: string): string | null {
   const name = readPointer(dataDir);
   return name === null ? null : join(dataDir, name);
+}
+
+interface StageInput {
+  opts: SeedOptions;
+  rb: RebrickableData;
+  sources: FetchedSources;
+  lib: LDrawLibrary;
+  fanSources: FanSource[];
+  log: (msg: string) => void;
+  cacheDir: string;
+  partMapInput: { partNum: string; ldrawFile: string | null; geometryFrom: string | null }[];
+}
+
+type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify: RefClassifier; suffixed: Set<string> };
+type SetUpdate = { id: number; author: string | null; authors: string[]; license: string | null; url: string };
+
+/** The distinct non-empty authors of a model's files, sorted. */
+const authorsOf = (list: readonly string[]): string[] =>
+  [...new Set(list.map((a) => a.trim()).filter((a) => a !== ''))].sort();
+
+const mediaId = (f: OmrFile): number => Number(/\/omr_models\/(\d+)\//.exec(f.url)?.[1] ?? 0);
+
+/**
+ * OMR re-uploads keep their file name under a new media id. Keeps one file per name, the one with the
+ * highest media id (the latest upload), in the original order.
+ */
+function dedupeOmr(files: OmrFile[], log: (msg: string) => void): { files: OmrFile[]; dropped: number } {
+  const keep = new Map<string, OmrFile>();
+  for (const f of files) {
+    const cur = keep.get(f.fileName);
+    if (cur === undefined) { keep.set(f.fileName, f); continue; }
+    const [kept, dropped] = mediaId(f) > mediaId(cur) ? [f, cur] : [cur, f];
+    keep.set(f.fileName, kept);
+    log(`omr duplicate ${f.fileName}: kept ${mediaId(kept)}, dropped ${mediaId(dropped)}`);
+  }
+  const kept = new Set(keep.values());
+  return { files: files.filter((f) => kept.has(f)), dropped: files.length - kept.size };
+}
+
+const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const sumParts = (parts: { quantity: number }[]) => parts.reduce((n, p) => n + p.quantity, 0);
+
+/**
+ * Writes the project stages and returns their manifest entries. Set projects are written for every
+ * variant and their errors fail the seed. OMR (standard and full) and each fan source (full) are
+ * isolated: a failure removes that stage's rows, is logged, and is listed in `failed_sources`.
+ */
+async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<Record<string, string | number>> {
+  const { opts, rb, sources, log } = input;
+  const variant: Variant = opts.variant ?? 'fallback';
+
+  const sets = buildSetProjects(rb, 1);
+  writeProjects(db, sets.projects);
+  writeProjectParts(db, sets.parts);
+  log(`wrote ${sets.projects.length} set projects`);
+  const setByNum = new Map(sets.projects.map((p) => [p.sourceKey, p]));
+  let nextProjectId = sets.projects.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+  let lastSubmodelId = 0;
+  const nextSubmodelId = () => ++lastSubmodelId;
+
+  // Rows are buffered and written in batches; each batch is one transaction per table.
+  let projectRows: ProjectRow[] = [];
+  let partRows: ProjectPartRow[] = [];
+  let submodelRows: SubmodelRow[] = [];
+  let placementRows: PlacementRow[] = [];
+  let authorRows: ProjectAuthorRow[] = [];
+  const flush = () => {
+    writeProjects(db, projectRows);
+    writeProjectAuthors(db, authorRows);
+    writeProjectParts(db, partRows);
+    writeSubmodels(db, submodelRows);
+    writePlacements(db, placementRows);
+    projectRows = []; authorRows = []; partRows = []; submodelRows = []; placementRows = [];
+  };
+  const add = (projectId: number, a: AssembledProject, project: ProjectRow | null, authors: string[] = []) => {
+    if (project) {
+      projectRows.push(project);
+      for (const author of authors) authorRows.push({ projectId, author });
+      for (const p of a.parts) partRows.push({ ...p, projectId });
+    }
+    for (const s of a.submodels) submodelRows.push({ ...s, projectId });
+    for (const p of a.placements) placementRows.push(p);
+    if (placementRows.length >= PLACEMENT_FLUSH_EVERY) flush();
+  };
+  // Removes everything a failed stage wrote: projects from `firstProject`, submodels after `lastSubmodel`.
+  const discard = (firstProject: number, lastSubmodel: number) => {
+    projectRows = []; authorRows = []; partRows = []; submodelRows = []; placementRows = [];
+    db.prepare('DELETE FROM placements WHERE submodel_id > ?').run(lastSubmodel);
+    db.prepare('DELETE FROM submodels WHERE id > ?').run(lastSubmodel);
+    db.prepare('DELETE FROM project_parts WHERE project_id >= ?').run(firstProject);
+    db.prepare('DELETE FROM project_authors WHERE project_id >= ?').run(firstProject);
+    db.prepare('DELETE FROM projects WHERE id >= ?').run(firstProject);
+  };
+
+  const failedSources: string[] = [];
+  let colorRate: number | '' = '';
+  let placementRate: number | '' = '';
+  let omrStats: AssemblyStats | null = null;
+  let skippedLicense = 0;
+  let fanSkippedLicense = 0;
+  const fanCommits: Record<string, string> = {};
+  let omrFilesFailed = 0;
+  let omrDuplicates = 0;
+  let keyClashes = 0;
+
+  // The maps are needed by OMR and every fan source, so a failure here fails all of them.
+  let maps: Maps | null = null;
+  if (variant !== 'fallback') {
+    try {
+      const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
+      if (colors.map.size === 0) throw new Error('LDConfig.ldr maps no colors');
+      colorRate = colors.rate;
+      const classify = refClassifier(input.lib);
+      // Aliases resolve to their target and `~` files are sub-parts, so neither is suffix-matched.
+      const plainFiles = input.lib.partFiles().filter((f) => /[a-z]\.dat$/.test(f) && classify(f).kind === 'other');
+      const partMap = buildPartMap(input.partMapInput, plainFiles);
+      maps = { parts: partMap.parts, suffixed: partMap.suffixed, colors: colors.map, classify };
+    } catch (err) {
+      failedSources.push('omr');
+      if (variant === 'full') failedSources.push(...input.fanSources.map((src) => src.id));
+      log(`project maps failed: ${errText(err)}`);
+    }
+  }
+  if (maps !== null) {
+
+    const firstProject = nextProjectId;
+    const lastSubmodel = lastSubmodelId;
+    try {
+      let files = opts.omr?.files;
+      if (!files) {
+        const r = await fetchOmr(input.cacheDir, { baseUrl: opts.omr?.baseUrl, backoffMs: opts.omr?.backoffMs });
+        files = r.files;
+        omrFilesFailed += r.failed;
+        log(`omr: ${r.files.length} files (${r.fetched} fetched, ${r.fromCache} cached, ${r.failed} failed)`);
+        for (const f of r.failedUrls.slice(0, 20)) log(`omr download failed: ${f.url}: ${f.reason}`);
+      }
+      const deduped = dedupeOmr(files, log);
+      files = deduped.files;
+      omrDuplicates = deduped.dropped;
+      const omrKeys = new Set<string>();
+      const updates: SetUpdate[] = [];
+      const attached = new Set<number>();
+      const stats: AssemblyStats = {
+        placements: 0, partRefs: 0, partResolved: 0, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0,
+      };
+      for (const f of files) {
+        let a: AssembledProject;
+        let author: string | null;
+        let license: string | null;
+        try {
+          const parsed = parseModel(readFileSync(f.path, 'utf8'), f.fileName);
+          const top = parsed.files.get(parsed.main);
+          if (!top) throw new Error('no model in file');
+          // Sub-files without a license line inherit the top-level one; an explicit disallowed line excludes the model.
+          if (!licenseAllowed(top.license) ||
+            [...parsed.files.values()].some((m) => m.license !== null && !licenseAllowed(m.license))) {
+            skippedLicense++;
+            continue;
+          }
+          a = assembleProject(parsed.main, parsed.files, maps, nextSubmodelId);
+          author = top.author ?? a.authors[0] ?? null;
+          license = top.license;
+        } catch (err) {
+          omrFilesFailed++;
+          log(`omr file failed: ${f.fileName}: ${errText(err)}`);
+          continue;
+        }
+        const set = setByNum.get(f.setNum);
+        const attach = set !== undefined && !f.isBModel && !attached.has(set.id);
+        if (!attach && omrKeys.has(f.fileName)) {
+          keyClashes++;
+          log(`omr key clash: ${f.fileName} already written; skipped ${f.url}`);
+          continue;
+        }
+        for (const k of Object.keys(stats) as (keyof AssemblyStats)[]) stats[k] += a.stats[k];
+        if (attach) {
+          // A set's main model gives the set positions; the set keeps its Rebrickable parts list.
+          attached.add(set.id);
+          updates.push({ id: set.id, author, authors: authorsOf(a.authors), license, url: f.url });
+          add(set.id, a, null);
+          continue;
+        }
+        omrKeys.add(f.fileName);
+        const id = nextProjectId++;
+        const stem = f.fileName.replace(/\.[^.]+$/, '');
+        const suffix = stem.slice(f.setNum.length).replace(/^[\s_-]+/, '');
+        add(id, a, {
+          id, source: 'omr', sourceKey: f.fileName, kind: 'official',
+          name: set ? (suffix === '' ? set.name : `${set.name} (${suffix})`) : stem,
+          year: set?.year ?? null, theme: set?.theme ?? null, parentTheme: set?.parentTheme ?? null,
+          partCount: sumParts(a.parts), author, license, url: f.url,
+          hasPositions: true, baseProjectId: set?.id ?? null,
+        }, authorsOf(a.authors));
+      }
+      flush();
+      const update = db.prepare('UPDATE projects SET has_positions = 1, author = ?, license = ?, url = ? WHERE id = ?');
+      const addAuthor = db.prepare('INSERT OR IGNORE INTO project_authors (project_id, author) VALUES (?, ?)');
+      db.exec('BEGIN');
+      try {
+        for (const u of updates) {
+          update.run(u.author, u.license, u.url, u.id);
+          for (const author of u.authors) addAuthor.run(u.id, author);
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+      // Part references only: sub-assembly references, primitives, and segments are not parts.
+      placementRate = stats.partRefs === 0 ? '' : stats.partResolved / stats.partRefs;
+      omrStats = stats;
+      log(`omr: ${attached.size} sets with positions, ${nextProjectId - firstProject} omr projects, ` +
+        `${skippedLicense} skipped for license, ${omrFilesFailed} failed, ` +
+        `${stats.partResolved}/${stats.partRefs} part references resolved (${stats.primitives} primitives, ` +
+        `${stats.segments} segments excluded; ${stats.aliases} via aliases, ${stats.suffixMatched} via suffix)`);
+    } catch (err) {
+      discard(firstProject, lastSubmodel);
+      failedSources.push('omr');
+      log(`omr failed: ${errText(err)}`);
+    }
+
+    if (variant === 'full') {
+      for (const src of input.fanSources) {
+        const firstFan = nextProjectId;
+        const lastFanSubmodel = lastSubmodelId;
+        try {
+          const { root, commit, files } = await fetchFanSource(input.cacheDir, src, { ...opts.fanFetch, refresh: opts.refresh });
+          const built = buildFanProjects(src, root, files, maps, nextSubmodelId);
+          const fanKeys = new Set<string>();
+          for (const p of built.projects) {
+            if (fanKeys.has(p.root)) {
+              keyClashes++;
+              log(`fan ${src.id} key clash: ${p.root} already written; skipped`);
+              continue;
+            }
+            fanKeys.add(p.root);
+            const id = nextProjectId++;
+            const fileAuthors = authorsOf(p.authors);
+            add(id, p, {
+              id, source: src.id, sourceKey: p.root, kind: 'fan', name: p.root.replace(/\.[^.]+$/, ''),
+              year: null, theme: null, parentTheme: null, partCount: sumParts(p.parts),
+              author: p.authors[0] ?? src.designer, license: p.licenses[0] ?? src.defaultLicense,
+              url: src.homepage, hasPositions: true, baseProjectId: null,
+            }, fileAuthors.length > 0 ? fileAuthors : authorsOf([src.designer]));
+          }
+          flush();
+          fanSkippedLicense += built.skipped;
+          if (commit !== null) fanCommits[`fan_commit_${src.id}`] = commit;
+          log(`fan ${src.id}: ${built.projects.length} projects, ${built.skipped} skipped for license`);
+        } catch (err) {
+          discard(firstFan, lastFanSubmodel);
+          failedSources.push(src.id);
+          log(`fan ${src.id} failed: ${errText(err)}`);
+        }
+      }
+    }
+  }
+
+  const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+  return {
+    variant,
+    built_by: opts.builtBy ?? 'local',
+    placement_match_rate: placementRate,
+    color_match_rate: colorRate,
+    count_projects_official: count("SELECT count(*) AS n FROM projects WHERE kind = 'official'"),
+    count_projects_with_positions: count('SELECT count(*) AS n FROM projects WHERE has_positions = 1'),
+    count_projects_fan: count("SELECT count(*) AS n FROM projects WHERE kind = 'fan'"),
+    count_models_skipped_license: skippedLicense,
+    count_fan_skipped_license: fanSkippedLicense,
+    count_omr_files_failed: omrFilesFailed,
+    count_omr_duplicates: omrDuplicates,
+    count_project_key_clashes: keyClashes,
+    count_placements_part_refs: omrStats?.partRefs ?? 0,
+    count_placements_part_resolved: omrStats?.partResolved ?? 0,
+    count_placements_primitive: omrStats?.primitives ?? 0,
+    count_placements_segment: omrStats?.segments ?? 0,
+    count_placements_alias_resolved: omrStats?.aliases ?? 0,
+    count_placements_suffix_matched: omrStats?.suffixMatched ?? 0,
+    failed_sources: failedSources.join(','),
+    ...fanCommits,
+  };
 }

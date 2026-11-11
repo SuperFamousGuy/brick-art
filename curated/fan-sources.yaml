@@ -1,0 +1,21 @@
+# Fan-made model sources. See docs/superpowers/specs/2026-11-10-projects-database-design.md.
+#
+# Datsville layout, inspected 2026-11-10 with the GitHub git trees API (default branch: main):
+#   models_source/      about 1,660 flat files (no subfolders): ~1,460 .ldr, ~100 .mpd, ~65 .dat.
+#                       Buildings, vehicles, plants, roads, blocks, and so on (building_*, vehicle_*,
+#                       plant_*, snotroad_*, block_base_*, ...). This is the model folder.
+#                       The .dat files are custom parts, not models, so they are left out.
+#   models_processed/   generated merges and conversions of the whole town (.mpd, .xmpd, .json, .dae).
+#                       These duplicate models_source, so they are left out.
+#   queue/              pending and lost submissions; not part of the released town. Left out.
+#   streets, traffic, etc. are name prefixes inside models_source, not folders.
+# Licenses are mixed and written in each file's header; there is no default_license, so files
+# without a license line are skipped.
+- id: datsville
+  name: Datsville
+  homepage: https://github.com/mjhorvath/Datsville
+  fetch:
+    kind: github
+    repo: mjhorvath/Datsville
+    paths: ["models_source/*.ldr", "models_source/*.mpd"]
+  designer: Datsville contributors

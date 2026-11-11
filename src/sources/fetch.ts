@@ -48,14 +48,14 @@ export interface FetchOptions {
 
 const REBRICKABLE_TABLES = [
   'parts', 'part_categories', 'part_relationships', 'colors',
-  'elements', 'inventory_parts', 'inventories', 'sets',
+  'elements', 'inventory_parts', 'inventories', 'sets', 'themes', 'inventory_minifigs', 'minifigs',
 ];
 const USER_AGENT = 'brick-art-seed';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 
 /** Aborts `signal` when `touch()` has not been called for `ms`. */
-function idleGuard(ms: number) {
+export function idleGuard(ms: number) {
   const controller = new AbortController();
   let timedOut = false;
   let timer: NodeJS.Timeout;
@@ -72,7 +72,7 @@ function idleGuard(ms: number) {
   };
 }
 
-async function download(
+export async function download(
   url: string, dest: string, name: string, idleTimeoutMs: number, headers: Record<string, string> = {},
 ) {
   const guard = idleGuard(idleTimeoutMs);
@@ -109,9 +109,9 @@ async function download(
   }
 }
 
-type StoredRecord = SourceRecord & { commit?: string };
+export type StoredRecord = SourceRecord & { commit?: string };
 
-async function readFresh(
+export async function readFresh(
   cacheDir: string, name: string, file: string, opts: FetchOptions,
 ): Promise<StoredRecord | null> {
   if (opts.refresh) return null;
@@ -125,7 +125,7 @@ async function readFresh(
   }
 }
 
-async function fetchOne(
+export async function fetchOne(
   cacheDir: string, name: string, file: string, url: string, extra: Partial<StoredRecord> = {},
   idleTimeoutMs: number, headers?: Record<string, string>,
 ): Promise<StoredRecord> {
@@ -141,12 +141,14 @@ function publicRecord({ commit: _commit, ...record }: StoredRecord): SourceRecor
   return record;
 }
 
-async function ensureExtracted(
+export async function ensureExtracted(
   cacheDir: string, prefix: string, zipFile: string, sha256: string,
-  keep: (path: string) => boolean, strip: RegExp,
+  keep: (path: string) => boolean, strip: RegExp, keySuffix = '',
 ): Promise<string> {
   const extractDir = join(cacheDir, 'extract');
-  const target = join(extractDir, `${prefix}-${sha256}`);
+  // keySuffix versions the keep predicate: a changed predicate must not reuse an older extraction.
+  const key = `${prefix}-${sha256}${keySuffix}`;
+  const target = join(extractDir, key);
   const exists = await stat(target).then((s) => s.isDirectory(), () => false);
   if (!exists) {
     const tmp = `${target}.tmp-${process.pid}`;
@@ -163,7 +165,7 @@ async function ensureExtracted(
   }
   try {
     for (const entry of await readdir(extractDir)) {
-      if (entry.startsWith(`${prefix}-`) && entry !== `${prefix}-${sha256}`) {
+      if (entry.startsWith(`${prefix}-`) && entry !== key) {
         await rm(join(extractDir, entry), { recursive: true, force: true }).catch(() => {});
       }
     }
@@ -171,7 +173,7 @@ async function ensureExtracted(
   return target;
 }
 
-async function fetchCommitSha(url: string, idleTimeoutMs: number): Promise<string> {
+export async function fetchCommitSha(url: string, idleTimeoutMs: number): Promise<string> {
   const guard = idleGuard(idleTimeoutMs);
   try {
     const res = await fetch(url, {
@@ -220,7 +222,7 @@ export async function fetchSources(cacheDir: string, opts: FetchOptions): Promis
 
   const ldrawRoot = await ensureExtracted(
     cacheDir, 'ldraw', join(cacheDir, 'ldraw.zip'), ldraw.sha256,
-    (p) => /^(parts|p)\//.test(p), /^ldraw\//,
+    (p) => /^(parts|p)\//.test(p) || p === 'LDConfig.ldr', /^ldraw\//, '-v2',
   );
   const shadowRoot = await ensureExtracted(
     cacheDir, 'ldcad', join(cacheDir, 'ldcad.zip'), ldcad.sha256,

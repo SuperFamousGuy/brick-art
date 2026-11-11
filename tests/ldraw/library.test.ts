@@ -79,3 +79,11 @@ test('fixture zips have the expected prefixes', async (t) => {
   const sh = Object.keys(unzipSync(new Uint8Array(await readFile(src.ldcadZip))));
   assert.ok(sh.includes('LDCadShadowLibrary-abc123/parts/33085.dat'));
 });
+
+test('partFiles lists the files directly in parts/ only', () => {
+  const lib = LDrawLibrary.fromMaps(
+    new Map([['parts/3001.dat', ''], ['parts/s/3001s01.dat', ''], ['p/stud.dat', ''], ['parts/3023b.dat', '']]),
+    new Map([['parts/9999.dat', '']]),
+  );
+  assert.deepEqual(lib.partFiles().sort(), ['3001.dat', '3023b.dat']);
+});
