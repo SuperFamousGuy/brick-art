@@ -7,9 +7,11 @@ import { SEED_VERSION, createSchema } from '../db/schema.ts';
 import { readPointer, writePointer } from '../db/open.ts';
 import {
   writeColors, writeConnections, writeCreativeUses, writeManifest, writeParts, writePartColors,
-  writePlacements, writeProjectParts, writeProjects, writeRelationships, writeSources, writeSubmodels, writeTraits,
+  writePlacements, writeProjectAuthors, writeProjectParts, writeProjects, writeRelationships, writeSources, writeSubmodels, writeTraits,
 } from '../db/write.ts';
-import type { ConnectionRow, PartColorRow, PartRow, PlacementRow, SubmodelRow, TraitRow } from '../db/write.ts';
+import type {
+  ConnectionRow, PartColorRow, PartRow, PlacementRow, ProjectAuthorRow, SubmodelRow, TraitRow,
+} from '../db/write.ts';
 import { computeAvailability } from '../derive/availability.ts';
 import { matchParts, matchRateTop } from '../derive/match.ts';
 import { isSystemPart } from '../derive/system.ts';
@@ -351,7 +353,11 @@ interface StageInput {
 }
 
 type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify: RefClassifier; suffixed: Set<string> };
-type SetUpdate = { id: number; author: string | null; license: string | null; url: string };
+type SetUpdate = { id: number; author: string | null; authors: string[]; license: string | null; url: string };
+
+/** The distinct non-empty authors of a model's files, sorted. */
+const authorsOf = (list: readonly string[]): string[] =>
+  [...new Set(list.map((a) => a.trim()).filter((a) => a !== ''))].sort();
 
 const mediaId = (f: OmrFile): number => Number(/\/omr_models\/(\d+)\//.exec(f.url)?.[1] ?? 0);
 
@@ -398,16 +404,19 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   let partRows: ProjectPartRow[] = [];
   let submodelRows: SubmodelRow[] = [];
   let placementRows: PlacementRow[] = [];
+  let authorRows: ProjectAuthorRow[] = [];
   const flush = () => {
     writeProjects(db, projectRows);
+    writeProjectAuthors(db, authorRows);
     writeProjectParts(db, partRows);
     writeSubmodels(db, submodelRows);
     writePlacements(db, placementRows);
-    projectRows = []; partRows = []; submodelRows = []; placementRows = [];
+    projectRows = []; authorRows = []; partRows = []; submodelRows = []; placementRows = [];
   };
-  const add = (projectId: number, a: AssembledProject, project: ProjectRow | null) => {
+  const add = (projectId: number, a: AssembledProject, project: ProjectRow | null, authors: string[] = []) => {
     if (project) {
       projectRows.push(project);
+      for (const author of authors) authorRows.push({ projectId, author });
       for (const p of a.parts) partRows.push({ ...p, projectId });
     }
     for (const s of a.submodels) submodelRows.push({ ...s, projectId });
@@ -416,10 +425,11 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   };
   // Removes everything a failed stage wrote: projects from `firstProject`, submodels after `lastSubmodel`.
   const discard = (firstProject: number, lastSubmodel: number) => {
-    projectRows = []; partRows = []; submodelRows = []; placementRows = [];
+    projectRows = []; authorRows = []; partRows = []; submodelRows = []; placementRows = [];
     db.prepare('DELETE FROM placements WHERE submodel_id > ?').run(lastSubmodel);
     db.prepare('DELETE FROM submodels WHERE id > ?').run(lastSubmodel);
     db.prepare('DELETE FROM project_parts WHERE project_id >= ?').run(firstProject);
+    db.prepare('DELETE FROM project_authors WHERE project_id >= ?').run(firstProject);
     db.prepare('DELETE FROM projects WHERE id >= ?').run(firstProject);
   };
 
@@ -507,7 +517,7 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         if (attach) {
           // A set's main model gives the set positions; the set keeps its Rebrickable parts list.
           attached.add(set.id);
-          updates.push({ id: set.id, author, license, url: f.url });
+          updates.push({ id: set.id, author, authors: authorsOf(a.authors), license, url: f.url });
           add(set.id, a, null);
           continue;
         }
@@ -521,13 +531,17 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
           year: set?.year ?? null, theme: set?.theme ?? null, parentTheme: set?.parentTheme ?? null,
           partCount: sumParts(a.parts), author, license, url: f.url,
           hasPositions: true, baseProjectId: set?.id ?? null,
-        });
+        }, authorsOf(a.authors));
       }
       flush();
       const update = db.prepare('UPDATE projects SET has_positions = 1, author = ?, license = ?, url = ? WHERE id = ?');
+      const addAuthor = db.prepare('INSERT OR IGNORE INTO project_authors (project_id, author) VALUES (?, ?)');
       db.exec('BEGIN');
       try {
-        for (const u of updates) update.run(u.author, u.license, u.url, u.id);
+        for (const u of updates) {
+          update.run(u.author, u.license, u.url, u.id);
+          for (const author of u.authors) addAuthor.run(u.id, author);
+        }
         db.exec('COMMIT');
       } catch (err) {
         db.exec('ROLLBACK');
@@ -562,12 +576,13 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
             }
             fanKeys.add(p.root);
             const id = nextProjectId++;
+            const fileAuthors = authorsOf(p.authors);
             add(id, p, {
               id, source: src.id, sourceKey: p.root, kind: 'fan', name: p.root.replace(/\.[^.]+$/, ''),
               year: null, theme: null, parentTheme: null, partCount: sumParts(p.parts),
               author: p.authors[0] ?? src.designer, license: p.licenses[0] ?? src.defaultLicense,
               url: src.homepage, hasPositions: true, baseProjectId: null,
-            });
+            }, fileAuthors.length > 0 ? fileAuthors : authorsOf([src.designer]));
           }
           flush();
           fanSkippedLicense += built.skipped;

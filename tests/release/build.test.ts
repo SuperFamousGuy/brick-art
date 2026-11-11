@@ -74,6 +74,12 @@ test('buildRelease writes both databases, release.json and CREDITS.md', async (t
             (SELECT count(*) FROM placements WHERE submodel_id NOT IN (SELECT id FROM submodels)) AS n`,
   ).get() as { n: number };
   assert.equal(orphans.n, 0);
+  const fanAuthors = (db: DatabaseSync) => (db.prepare(
+    `SELECT count(*) AS n FROM project_authors
+     WHERE project_id NOT IN (SELECT id FROM projects WHERE kind <> 'fan')`,
+  ).get() as { n: number }).n;
+  assert.equal(fanAuthors(counts.standard!), 0);
+  assert.ok(fanAuthors(counts.full!) > 0);
   for (const db of Object.values(counts)) db.close();
 
   const credits = await readFile(join(outDir, 'CREDITS.md'), 'utf8');
@@ -91,6 +97,8 @@ test('buildRelease writes both databases, release.json and CREDITS.md', async (t
   assert.match(section('LDraw Parts Library'), /License: CC BY 4\.0\n- Version: release 2026-10\n/);
   assert.match(section('LDCad shadow library'), /License: CC BY-SA 4\.0\n- Version: commit abc123\n/);
   assert.match(section('LDraw Official Model Repository'), /License: CC BY 4\.0 or CCAL 2\.0, per file\n[^]*  - Test Builder\n/);
+  assert.match(section('LDraw Official Model Repository'), /  - Cab Builder\n/);
+  assert.match(section('Fixture Fan Town'), /  - Builder\n/);
   assert.match(section('Fixture Fan Town'),
     /Link: https:\/\/example\.test\/fan\n- License: license per file\n- Version: commit f00dfacef00dface\n- Authors:\n[^]*  - Mayor\n/);
 });
@@ -138,7 +146,8 @@ test('deriveStandard drops fan source ids from failed_sources but keeps omr', as
   const db = new DatabaseSync(full);
   db.exec(`CREATE TABLE manifest (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE projects (id INTEGER, kind TEXT, has_positions INTEGER);
-    CREATE TABLE project_parts (project_id INTEGER); CREATE TABLE submodels (id INTEGER, project_id INTEGER);
+    CREATE TABLE project_parts (project_id INTEGER); CREATE TABLE project_authors (project_id INTEGER, author TEXT);
+    CREATE TABLE submodels (id INTEGER, project_id INTEGER);
     CREATE TABLE placements (submodel_id INTEGER);
     INSERT INTO manifest VALUES ('failed_sources','omr,fan_x');`);
   db.close();

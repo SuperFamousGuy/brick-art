@@ -205,7 +205,7 @@ export function createServer(dataDir: string): McpServer {
   server.registerTool(
     'get_project',
     {
-      description: `Returns full detail for one project: parts with colors and quantities, and its submodels. ${CREDIT}`,
+      description: `Returns full detail for one project: every model author, parts with colors and quantities, and its submodels. ${CREDIT}`,
       inputSchema: { id: int.describe('Project id from search_projects.') },
     },
     (args: { id: number }): ToolResult => {

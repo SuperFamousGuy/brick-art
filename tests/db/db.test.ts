@@ -39,13 +39,13 @@ const part = (n: string, over: Partial<PartRow> = {}): PartRow => ({
   basePartNum: null, isSystem: true, ...over,
 });
 
-test('createSchema creates all 14 tables and symmetric compat rows', () => {
+test('createSchema creates all 15 tables and symmetric compat rows', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   assert.deepEqual(names(db, 'table'), [
     'colors', 'connection_compat', 'connections', 'creative_uses', 'manifest',
     'part_colors', 'part_relationships', 'part_traits', 'parts', 'placements',
-    'project_parts', 'projects', 'sources', 'submodels',
+    'project_authors', 'project_parts', 'projects', 'sources', 'submodels',
   ]);
   assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 13);
   const has = (a: string, b: string) =>

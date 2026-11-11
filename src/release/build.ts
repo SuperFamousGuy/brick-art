@@ -71,6 +71,7 @@ export function deriveStandard(fullFile: string, outFile: string): void {
         (SELECT s.id FROM submodels s JOIN projects p ON p.id = s.project_id WHERE p.kind = 'fan');
       DELETE FROM submodels WHERE project_id IN (SELECT id FROM projects WHERE kind = 'fan');
       DELETE FROM project_parts WHERE project_id IN (SELECT id FROM projects WHERE kind = 'fan');
+      DELETE FROM project_authors WHERE project_id IN (SELECT id FROM projects WHERE kind = 'fan');
       DELETE FROM projects WHERE kind = 'fan';
       INSERT OR REPLACE INTO manifest (key, value) VALUES ('variant', 'standard'), ('count_projects_fan', '0');
       INSERT OR REPLACE INTO manifest (key, value)
@@ -118,14 +119,16 @@ async function creditsText(db: DatabaseSync, repoRoot: string): Promise<string> 
     '',
     ...source('LDraw Official Model Repository', 'https://library.ldraw.org/omr',
       'CC BY 4.0 or CCAL 2.0, per file', `models fetched ${(manifest.get('started_at') ?? '').slice(0, 10) || 'unknown'}`),
-    ...authors(distinct(db, "SELECT DISTINCT author FROM projects WHERE kind = 'official' AND has_positions = 1 AND author IS NOT NULL"), '(none)'),
+    ...authors(distinct(db, `SELECT DISTINCT a.author FROM project_authors a JOIN projects p ON p.id = a.project_id
+      WHERE p.kind = 'official' AND p.has_positions = 1`), '(none)'),
   ];
   const fan = (await loadCurated(curatedDir(repoRoot))).fanSources.slice().sort((a, b) => a.id.localeCompare(b.id));
   const used = new Set((db.prepare("SELECT DISTINCT source FROM projects WHERE kind = 'fan'").all() as { source: string }[])
     .map((r) => r.source));
   for (const s of fan.filter((f) => used.has(f.id))) {
     lines.push('', ...source(s.name, s.homepage, 'license per file', `commit ${manifest.get(`fan_commit_${s.id}`) || 'unknown'}`));
-    lines.push(...authors(distinct(db, 'SELECT DISTINCT author FROM projects WHERE source = ? AND author IS NOT NULL', s.id), s.designer));
+    lines.push(...authors(distinct(db, `SELECT DISTINCT a.author FROM project_authors a JOIN projects p ON p.id = a.project_id
+      WHERE p.kind = 'fan' AND p.source = ?`, s.id), s.designer));
   }
   return lines.join('\n') + '\n';
 }

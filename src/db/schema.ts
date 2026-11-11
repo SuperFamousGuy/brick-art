@@ -50,6 +50,9 @@ CREATE TABLE projects (
   theme TEXT, parent_theme TEXT, part_count INTEGER, author TEXT, license TEXT, url TEXT,
   has_positions INTEGER, base_project_id INTEGER, UNIQUE (source, source_key)
 );
+CREATE TABLE project_authors (
+  project_id INTEGER, author TEXT, PRIMARY KEY (project_id, author)
+);
 CREATE TABLE project_parts (
   project_id INTEGER, part_num TEXT, color_id INTEGER, quantity INTEGER, is_spare INTEGER, from_minifig INTEGER
 );

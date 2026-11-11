@@ -106,6 +106,7 @@ test('getProject lists the minifig part and the submodels', () => {
   assert.equal(banana?.fromMinifig, true);
   assert.ok(p.parts.every((x) => x.colorName !== undefined));
   assert.equal(p.note, null);
+  assert.deepEqual(p.authors, ['Cab Builder', 'Test Builder']);
   assert.equal(getProject(std, 999999), null);
 });
 

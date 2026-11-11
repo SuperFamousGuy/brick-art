@@ -148,6 +148,13 @@ export function writeProjects(db: DatabaseSync, rows: readonly ProjectRow[]): vo
     ]);
 }
 
+export interface ProjectAuthorRow { projectId: number; author: string }
+
+export function writeProjectAuthors(db: DatabaseSync, rows: readonly ProjectAuthorRow[]): void {
+  batch(db, 'INSERT OR IGNORE INTO project_authors (project_id, author) VALUES (?, ?)', rows,
+    (r) => [r.projectId, r.author]);
+}
+
 export function writeProjectParts(db: DatabaseSync, rows: readonly ProjectPartRow[]): void {
   batch(db,
     'INSERT INTO project_parts (project_id, part_num, color_id, quantity, is_spare, from_minifig) VALUES (' + marks(6) + ')',

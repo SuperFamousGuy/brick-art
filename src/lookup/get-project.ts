@@ -4,6 +4,8 @@ import type { ProjectSummary, Row } from './search-projects.ts';
 
 export interface ProjectDetail extends Omit<ProjectSummary, 'submodels'> {
   baseProjectId: number | null;
+  /** Every distinct author of the model's files, sorted. */
+  authors: string[];
   parts: {
     partNum: string; name: string | null; colorId: number; colorName: string | null;
     quantity: number; isSpare: boolean; fromMinifig: boolean;
@@ -31,9 +33,13 @@ export function getProject(db: DatabaseSync, id: number): ProjectDetail | null {
   const submodels = db
     .prepare('SELECT * FROM submodels WHERE project_id = ? ORDER BY is_main DESC, id')
     .all(id) as Row[];
+  const authors = db
+    .prepare('SELECT author FROM project_authors WHERE project_id = ? ORDER BY author')
+    .all(id) as { author: string }[];
   return {
     ...summary,
     baseProjectId: p.base_project_id,
+    authors: authors.map((r) => r.author),
     parts: parts.map((r) => ({
       partNum: r.part_num, name: r.part_name, colorId: r.color_id, colorName: r.color_name,
       quantity: r.quantity, isSpare: r.is_spare === 1, fromMinifig: r.from_minifig === 1,
