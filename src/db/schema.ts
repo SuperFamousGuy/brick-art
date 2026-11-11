@@ -58,7 +58,7 @@ CREATE TABLE submodels (
 );
 CREATE TABLE placements (
   submodel_id INTEGER, step INTEGER, seq INTEGER, part_num TEXT, ldraw_file TEXT, ldraw_color INTEGER,
-  color_id INTEGER, child_submodel_id INTEGER, x REAL, y REAL, z REAL, matrix TEXT
+  color_id INTEGER, child_submodel_id INTEGER, ref_kind TEXT, x REAL, y REAL, z REAL, matrix TEXT
 );
 CREATE INDEX idx_parts_complete_sets ON parts(is_complete, set_count);
 CREATE INDEX idx_parts_dims ON parts(width_studs, depth_studs, height_plates);

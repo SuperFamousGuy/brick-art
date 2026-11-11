@@ -218,6 +218,29 @@ test('variant standard attaches OMR positions to the set and skips unlicensed B-
   assert.equal(s.manifest.color_match_rate, String(4 / 5));
 });
 
+test('OMR placements record their kind and the rate counts part references only', async (t) => {
+  const pages = omrPages();
+  const ref = (file: string) => `1 4 0 0 0 1 0 0 0 1 0 0 0 1 ${file}`;
+  pages.set('/media/omr_models/1/S1-1.mpd', [
+    '0 FILE S1-1.ldr', '0 Author: Test Builder', '0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt',
+    ref('3001.dat'), ref('4-4cyli.dat'), ref('77.dat'), ref('166.dat'), ref('9999x.dat'), '',
+  ].join('\n'));
+  const s = await seeded(t, 'standard', pages);
+  const rows = s.db.prepare('SELECT ref_kind, part_num, ldraw_file FROM placements ORDER BY seq').all();
+  assert.deepEqual(rows.map((r) => ({ ...r })), [
+    { ref_kind: 'part', part_num: '3001', ldraw_file: '3001.dat' },
+    { ref_kind: 'primitive', part_num: null, ldraw_file: '4-4cyli.dat' },
+    { ref_kind: 'segment', part_num: null, ldraw_file: '77.dat' },
+    { ref_kind: 'part', part_num: '3001', ldraw_file: '166.dat' },
+    { ref_kind: 'unmatched', part_num: null, ldraw_file: '9999x.dat' },
+  ]);
+  assert.equal(s.manifest.placement_match_rate, String(2 / 3));
+  assert.equal(s.manifest.count_placements_primitive, '1');
+  assert.equal(s.manifest.count_placements_segment, '1');
+  assert.equal(s.manifest.count_placements_alias_resolved, '1');
+  assert.equal(s.manifest.count_parts, '20');
+});
+
 test('variant standard turns licensed B-models and unknown sets into omr projects', async (t) => {
   const pages = omrPages();
   const licensed = MPD_BMODEL.replace('0 Author: B Builder', '0 Author: B Builder\n0 !LICENSE Licensed under CC BY 4.0');

@@ -19,6 +19,8 @@ import { resolvePart } from '../ldraw/resolve.ts';
 import { computeShape } from '../ldraw/shape.ts';
 import { dataPaths } from '../paths.ts';
 import { assembleProject } from '../projects/assemble.ts';
+import { refClassifier } from '../projects/classify.ts';
+import type { RefClassifier } from '../projects/classify.ts';
 import type { AssembledProject } from '../projects/assemble.ts';
 import { buildColorMap, buildPartMap } from '../projects/colors.ts';
 import { licenseAllowed } from '../projects/license.ts';
@@ -259,7 +261,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     })));
 
     const projects = await writeProjectStages(db, {
-      opts, rb, sources, fanSources: curated.fanSources, log, cacheDir: paths.cacheDir,
+      opts, rb, sources, lib, fanSources: curated.fanSources, log, cacheDir: paths.cacheDir,
       partMapInput: rb.parts.map((p) => {
         const m = matches.get(p.partNum);
         return { partNum: p.partNum, ldrawFile: m?.ldrawFile ?? null, geometryFrom: m?.geometryFrom ?? null };
@@ -341,13 +343,14 @@ interface StageInput {
   opts: SeedOptions;
   rb: RebrickableData;
   sources: FetchedSources;
+  lib: LDrawLibrary;
   fanSources: FanSource[];
   log: (msg: string) => void;
   cacheDir: string;
   partMapInput: { partNum: string; ldrawFile: string | null; geometryFrom: string | null }[];
 }
 
-type Maps = { parts: Map<string, string>; colors: Map<number, number> };
+type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify: RefClassifier };
 type SetUpdate = { id: number; author: string | null; license: string | null; url: string };
 
 const mediaId = (f: OmrFile): number => Number(/\/omr_models\/(\d+)\//.exec(f.url)?.[1] ?? 0);
@@ -423,6 +426,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   const failedSources: string[] = [];
   let colorRate: number | '' = '';
   let placementRate: number | '' = '';
+  let omrPrimitives = 0;
+  let omrSegments = 0;
+  let omrAliases = 0;
   let skippedLicense = 0;
   let omrFilesFailed = 0;
   let omrDuplicates = 0;
@@ -435,7 +441,7 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
       const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
       if (colors.map.size === 0) throw new Error('LDConfig.ldr maps no colors');
       colorRate = colors.rate;
-      maps = { parts: buildPartMap(input.partMapInput), colors: colors.map };
+      maps = { parts: buildPartMap(input.partMapInput), colors: colors.map, classify: refClassifier(input.lib) };
     } catch (err) {
       failedSources.push('omr');
       if (variant === 'full') failedSources.push(...input.fanSources.map((src) => src.id));
@@ -463,6 +469,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
       const attached = new Set<number>();
       let placements = 0;
       let resolved = 0;
+      let primitives = 0;
+      let segments = 0;
+      let aliases = 0;
       for (const f of files) {
         let a: AssembledProject;
         let author: string | null;
@@ -494,6 +503,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         }
         placements += a.stats.placements;
         resolved += a.stats.resolved;
+        primitives += a.stats.primitives;
+        segments += a.stats.segments;
+        aliases += a.stats.aliases;
         if (attach) {
           // A set's main model gives the set positions; the set keeps its Rebrickable parts list.
           attached.add(set.id);
@@ -523,9 +535,15 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         db.exec('ROLLBACK');
         throw err;
       }
-      placementRate = placements === 0 ? '' : resolved / placements;
+      // Primitives and segments are not parts, so they do not count toward the rate.
+      const partRefs = placements - primitives - segments;
+      placementRate = partRefs === 0 ? '' : resolved / partRefs;
+      omrPrimitives = primitives;
+      omrSegments = segments;
+      omrAliases = aliases;
       log(`omr: ${attached.size} sets with positions, ${nextProjectId - firstProject} omr projects, ` +
-        `${skippedLicense} skipped for license, ${omrFilesFailed} failed, ${resolved}/${placements} placements resolved`);
+        `${skippedLicense} skipped for license, ${omrFilesFailed} failed, ${resolved}/${partRefs} placements resolved ` +
+        `(${primitives} primitives, ${segments} segments excluded; ${aliases} via aliases)`);
     } catch (err) {
       discard(firstProject, lastSubmodel);
       failedSources.push('omr');
@@ -579,6 +597,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
     count_omr_files_failed: omrFilesFailed,
     count_omr_duplicates: omrDuplicates,
     count_project_key_clashes: keyClashes,
+    count_placements_primitive: omrPrimitives,
+    count_placements_segment: omrSegments,
+    count_placements_alias_resolved: omrAliases,
     failed_sources: failedSources.join(','),
   };
 }

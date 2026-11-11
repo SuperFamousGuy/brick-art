@@ -1,4 +1,5 @@
-import type { PlacementRow, SubmodelRow } from '../db/write.ts';
+import type { PlacementRow, RefKind, SubmodelRow } from '../db/write.ts';
+import type { RefClassifier } from './classify.ts';
 import { normalizeRef } from './mpd.ts';
 import type { ProjectPartRow } from './sets.ts';
 import type { ModelFile } from './types.ts';
@@ -7,18 +8,38 @@ export interface AssembledProject {
   submodels: Omit<SubmodelRow, 'projectId'>[];
   placements: PlacementRow[];
   parts: Omit<ProjectPartRow, 'projectId'>[];
-  stats: { placements: number; resolved: number };
+  /**
+   * `resolved` placements have a known part (or child) and color; `primitives` and `segments` are
+   * library files that are not parts; `aliases` resolved through a `~Moved to` or `=` alias.
+   */
+  stats: { placements: number; resolved: number; primitives: number; segments: number; aliases: number };
   licenses: (string | null)[];
   authors: string[];
 }
 
 const INHERIT = 16;
+const MAX_ALIAS_HOPS = 3;
+
+/** Follows up to three alias hops from `ref` to a known part; null on a cycle, dead end, or no match. */
+function followAlias(ref: string, parts: Map<string, string>, classify: RefClassifier): string | null {
+  const seen = new Set([ref]);
+  let cur = ref;
+  for (let hop = 0; hop < MAX_ALIAS_HOPS; hop++) {
+    const c = classify(cur);
+    if (c.kind !== 'alias' || c.aliasTarget === undefined || seen.has(c.aliasTarget)) return null;
+    cur = c.aliasTarget;
+    seen.add(cur);
+    const hit = parts.get(cur);
+    if (hit !== undefined) return hit;
+  }
+  return null;
+}
 
 /** Turns a parsed model tree into submodel, placement, and flattened part rows. */
 export function assembleProject(
   root: string,
   files: Map<string, ModelFile>,
-  maps: { parts: Map<string, string>; colors: Map<number, number> },
+  maps: { parts: Map<string, string>; colors: Map<number, number>; classify?: RefClassifier },
   nextSubmodelId: () => number,
 ): AssembledProject {
   const submodels: Omit<SubmodelRow, 'projectId'>[] = [];
@@ -28,6 +49,9 @@ export function assembleProject(
   const licenses: (string | null)[] = [];
   const authors = new Set<string>();
   let resolved = 0;
+  let primitives = 0;
+  let segments = 0;
+  let aliases = 0;
 
   const visit = (name: string, isMain: boolean): number => {
     const file = files.get(name)!;
@@ -45,17 +69,31 @@ export function assembleProject(
       let childSubmodelId: number | null = null;
       let partNum: string | null = null;
       let ldrawFile: string | null = ref;
+      let refKind: RefKind = 'unmatched';
       if (files.has(ref) && !stack.has(ref)) {
         childSubmodelId = ids.get(ref) ?? visit(ref, false);
         ldrawFile = null;
+        refKind = 'submodel';
       } else if (!files.has(ref)) {
         partNum = maps.parts.get(ref) ?? null;
+        const kind = partNum === null && maps.classify ? maps.classify(ref).kind : null;
+        if (kind === 'alias') {
+          partNum = followAlias(ref, maps.parts, maps.classify!);
+          if (partNum !== null) aliases++;
+        } else if (kind === 'primitive') {
+          refKind = 'primitive';
+          primitives++;
+        } else if (kind === 'segment') {
+          refKind = 'segment';
+          segments++;
+        }
+        if (partNum !== null) refKind = 'part';
       }
       if (childSubmodelId === null) sub.partCount++;
       if (colorOk && (partNum !== null || childSubmodelId !== null)) resolved++;
       placements.push({
         submodelId: id, step: line.step, seq: line.seq, partNum, ldrawFile, ldrawColor: line.color,
-        colorId, childSubmodelId, pos: line.pos, matrix: line.matrix,
+        colorId, childSubmodelId, refKind, pos: line.pos, matrix: line.matrix,
       });
     }
     stack.delete(name);
@@ -97,7 +135,7 @@ export function assembleProject(
     }
   }
   return {
-    submodels, placements, parts, stats: { placements: placements.length, resolved },
+    submodels, placements, parts, stats: { placements: placements.length, resolved, primitives, segments, aliases },
     licenses, authors: [...authors],
   };
 }

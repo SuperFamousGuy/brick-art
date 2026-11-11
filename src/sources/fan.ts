@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import type { FanSource } from '../curated/load.ts';
 import { assembleProject } from '../projects/assemble.ts';
 import type { AssembledProject } from '../projects/assemble.ts';
+import type { RefClassifier } from '../projects/classify.ts';
 import { licenseAllowed } from '../projects/license.ts';
 import { normalizeRef, parseModel } from '../projects/mpd.ts';
 import type { ModelFile } from '../projects/types.ts';
@@ -109,7 +110,7 @@ export async function fetchFanSource(
   return { root, commit, files };
 }
 
-type Maps = { parts: Map<string, string>; colors: Map<number, number> };
+type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify?: RefClassifier };
 
 /**
  * Parses every model file, finds the top-level models (those no file references), and assembles one

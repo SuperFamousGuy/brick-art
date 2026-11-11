@@ -223,7 +223,7 @@ export function createServer(dataDir: string): McpServer {
   server.registerTool(
     'get_submodel',
     {
-      description: `Returns the placed parts of one sub-assembly step by step (part, color, position, and rotation matrix). Transforms are in LDraw units (stud 20, plate 8, y axis down) and relative to the requested sub-assembly's origin. Steps come back whole, up to maxPlacements; continue from nextStep. Results may be truncated when expansion is very large or deeply nested; check "truncated". ${CREDIT}`,
+      description: `Returns the placed parts of one sub-assembly step by step (part, color, position, and rotation matrix); each placement's kind is part, submodel, primitive, segment, or unmatched. Transforms are in LDraw units (stud 20, plate 8, y axis down) and relative to the requested sub-assembly's origin. Steps come back whole, up to maxPlacements; continue from nextStep. Results may be truncated when expansion is very large or deeply nested; check "truncated". ${CREDIT}`,
       inputSchema: {
         submodelId: int.describe('Sub-assembly id from get_project.'),
         flatten: z.boolean().optional()

@@ -54,9 +54,13 @@ export interface SourceRow {
 export interface SubmodelRow {
   id: number; projectId: number; name: string; isMain: boolean; stepCount: number; partCount: number;
 }
+/** What a placement references: see the `placements.ref_kind` column. */
+export type RefKind = 'part' | 'submodel' | 'primitive' | 'segment' | 'unmatched';
+
 export interface PlacementRow {
   submodelId: number; step: number; seq: number; partNum: string | null; ldrawFile: string | null;
-  ldrawColor: number; colorId: number | null; childSubmodelId: number | null; pos: Vec3; matrix: Mat3;
+  ldrawColor: number; colorId: number | null; childSubmodelId: number | null; refKind: RefKind;
+  pos: Vec3; matrix: Mat3;
 }
 
 const bit = (b: boolean): number => (b ? 1 : 0);
@@ -158,9 +162,9 @@ export function writeSubmodels(db: DatabaseSync, rows: readonly SubmodelRow[]): 
 
 export function writePlacements(db: DatabaseSync, rows: readonly PlacementRow[]): void {
   batch(db,
-    'INSERT INTO placements (submodel_id, step, seq, part_num, ldraw_file, ldraw_color, color_id, child_submodel_id, x, y, z, matrix) VALUES (' + marks(12) + ')',
+    'INSERT INTO placements (submodel_id, step, seq, part_num, ldraw_file, ldraw_color, color_id, child_submodel_id, ref_kind, x, y, z, matrix) VALUES (' + marks(13) + ')',
     rows, (r) => [
-      r.submodelId, r.step, r.seq, r.partNum, r.ldrawFile, r.ldrawColor, r.colorId, r.childSubmodelId,
+      r.submodelId, r.step, r.seq, r.partNum, r.ldrawFile, r.ldrawColor, r.colorId, r.childSubmodelId, r.refKind,
       r.pos[0], r.pos[1], r.pos[2], JSON.stringify(r.matrix),
     ]);
 }

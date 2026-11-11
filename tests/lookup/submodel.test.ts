@@ -60,9 +60,11 @@ test('unflattened main shows two steps and the child by name', () => {
   assert.equal(r.steps.length, 2);
   assert.equal(r.nextStep, null);
   assert.equal(r.steps[0]!.placements[0]!.partNum, '3001');
+  assert.equal(r.steps[0]!.placements[0]!.kind, 'part');
   const child = r.steps[1]!.placements;
   assert.equal(child.length, 1);
   assert.equal(child[0]!.submodel, '10001 - cab.ldr');
+  assert.equal(child[0]!.kind, 'submodel');
   assert.equal(child[0]!.partNum, null);
 });
 
@@ -77,8 +79,9 @@ test('flatten composes transforms and inherits color 16, keeping unmatched refer
   assert.ok(p.colorName !== null);
   assert.deepEqual(p.pos, [0, -24, -10]);
   assert.deepEqual(p.matrix, [0, 0, 1, 0, 1, 0, -1, 0, 0]);
-  assert.ok(flat.some((x) => x.partNum === null && x.ldrawFile === 'missing.ldr'));
-  assert.ok(flat.some((x) => x.partNum === null && x.ldrawFile === '9999x.dat'));
+  assert.ok(flat.some((x) => x.kind === 'unmatched' && x.partNum === null && x.ldrawFile === 'missing.ldr'));
+  assert.ok(flat.some((x) => x.kind === 'unmatched' && x.partNum === null && x.ldrawFile === '9999x.dat'));
+  assert.equal(p.kind, 'part');
 });
 
 test('color 16 at the top level keeps a null color', () => {

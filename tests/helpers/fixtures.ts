@@ -157,6 +157,10 @@ function ldrawFixtures(): Map<string, string> {
   part('3437', 'Duplo Brick  2 x  2',
     [...hollow(-20, 0, -20, 20, 24, 20), ...[-10, 10].flatMap((x) => [studRef(x, -10), studRef(x, 10)])]);
   part('99999', 'Broken Part', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 s\\missing.dat']);
+  // Placement kinds: a primitive, a flexible segment, and a `~Moved to` alias with no Rebrickable row.
+  f.set('p/4-4cyli.dat', ldFile('Cylinder 1.0', '4-4cyli.dat', 'Primitive', box(-10, 0, -10, 10, 1, 10)));
+  part('77', '~Technic Flex-System Hose Segment', box(-2, 0, -2, 2, 2, 2));
+  f.set('parts/166.dat', ldFile('~Moved to 3001', '166.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat']));
   const colour = (name: string, code: number, rgb: string) =>
     `0 !COLOUR ${name.padEnd(40)} CODE ${String(code).padStart(3)}   VALUE #${rgb}   EDGE #333333`;
   f.set('LDConfig.ldr', [

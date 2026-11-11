@@ -113,6 +113,17 @@ test('checkGates reports each failed gate', () => {
   assert.deepEqual(checkGates(db), []);
 });
 
+test('checkGates accepts a placement rate of 0.95 and refuses 0.949', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE manifest (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE projects (id INTEGER, license TEXT);
+    CREATE TABLE parts (part_num TEXT, has_geometry INTEGER, license TEXT);
+    INSERT INTO manifest VALUES ('match_rate_top1000','0.99'),('placement_match_rate','0.95'),('failed_sources','');`);
+  assert.deepEqual(checkGates(db), []);
+  db.exec("UPDATE manifest SET value='0.949' WHERE key='placement_match_rate'");
+  assert.deepEqual(checkGates(db), ['placement_match_rate is 0.949, below 0.95']);
+});
+
 test('deriveStandard drops fan source ids from failed_sources but keeps omr', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'brick-art-derive-'));
   t.after(() => rm(dir, { recursive: true, force: true }));

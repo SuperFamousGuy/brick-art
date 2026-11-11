@@ -1,8 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
+import type { RefKind } from '../db/write.ts';
 import type { Mat3, Vec3 } from '../types.ts';
 import type { Row } from './search-projects.ts';
 
 export interface PlacementOut {
+  /** `part`, `submodel`, `primitive` (an LDraw primitive), `segment` (a flexible segment or sub-part), or `unmatched`. */
+  kind: RefKind;
   partNum: string | null;
   ldrawFile: string | null;
   colorId: number | null;
@@ -101,7 +104,7 @@ export function getSubmodel(
     }
     budget.count++;
     out.push({
-      partNum: row.part_num, ldrawFile: row.ldraw_file, colorId,
+      kind: row.ref_kind, partNum: row.part_num, ldrawFile: row.ldraw_file, colorId,
       colorName: colorId === null ? null : (colorNames.get(colorId) ?? null),
       submodel: row.child_submodel_id === null ? null : nameOf(row.child_submodel_id),
       pos, matrix,

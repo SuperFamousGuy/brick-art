@@ -157,7 +157,7 @@ test('project writers store rows and round-trip the matrix', () => {
   const matrix = [0, 0, 1, 0, 1, 0, -1, 0, 0] as const;
   writePlacements(db, [{
     submodelId: 7, step: 1, seq: 2, partNum: '3001', ldrawFile: '3001.dat', ldrawColor: 16, colorId: null,
-    childSubmodelId: null, pos: [10, -24, 30], matrix: [...matrix] as never,
+    childSubmodelId: null, refKind: 'part', pos: [10, -24, 30], matrix: [...matrix] as never,
   }]);
   const p = db.prepare('SELECT * FROM projects').get() as Record<string, unknown>;
   assert.equal(p.source_key, '10001-1');
@@ -168,7 +168,7 @@ test('project writers store rows and round-trip the matrix', () => {
   const sm = db.prepare('SELECT * FROM submodels').get() as Record<string, unknown>;
   assert.deepEqual([sm.id, sm.is_main, sm.step_count, sm.part_count], [7, 1, 3, 5]);
   const pl = db.prepare('SELECT * FROM placements').get() as Record<string, unknown>;
-  assert.deepEqual([pl.x, pl.y, pl.z, pl.color_id, pl.child_submodel_id], [10, -24, 30, null, null]);
+  assert.deepEqual([pl.x, pl.y, pl.z, pl.color_id, pl.child_submodel_id, pl.ref_kind], [10, -24, 30, null, null, 'part']);
   assert.deepEqual(JSON.parse(pl.matrix as string), matrix);
   assert.throws(() => writeProjects(db, [{ ...project, id: 2 }]), /UNIQUE/);
   db.close();
