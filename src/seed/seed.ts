@@ -441,8 +441,11 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
       const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
       if (colors.map.size === 0) throw new Error('LDConfig.ldr maps no colors');
       colorRate = colors.rate;
-      const partMap = buildPartMap(input.partMapInput, input.lib.partFiles());
-      maps = { parts: partMap.parts, suffixed: partMap.suffixed, colors: colors.map, classify: refClassifier(input.lib) };
+      const classify = refClassifier(input.lib);
+      // Aliases resolve to their target and `~` files are sub-parts, so neither is suffix-matched.
+      const plainFiles = input.lib.partFiles().filter((f) => /[a-z]\.dat$/.test(f) && classify(f).kind === 'other');
+      const partMap = buildPartMap(input.partMapInput, plainFiles);
+      maps = { parts: partMap.parts, suffixed: partMap.suffixed, colors: colors.map, classify };
     } catch (err) {
       failedSources.push('omr');
       if (variant === 'full') failedSources.push(...input.fanSources.map((src) => src.id));

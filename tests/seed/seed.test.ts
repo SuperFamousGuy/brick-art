@@ -227,7 +227,7 @@ test('OMR placements record their kind and the rate counts part references only'
   const ref = (file: string) => `1 4 0 0 0 1 0 0 0 1 0 0 0 1 ${file}`;
   pages.set('/media/omr_models/1/S1-1.mpd', [
     '0 FILE S1-1.ldr', '0 Author: Test Builder', '0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt',
-    ref('3001.dat'), ref('4-4cyli.dat'), ref('77.dat'), ref('166.dat'), ref('9999x.dat'), ref('3023b.dat'), '',
+    ref('3001.dat'), ref('4-4cyli.dat'), ref('77.dat'), ref('166.dat'), ref('9999x.dat'), ref('3023b.dat'), ref('3001x.dat'), ref('3001y.dat'), '',
   ].join('\n'));
   const s = await seeded(t, 'standard', pages);
   const rows = s.db.prepare('SELECT ref_kind, part_num, ldraw_file FROM placements ORDER BY seq').all();
@@ -238,14 +238,16 @@ test('OMR placements record their kind and the rate counts part references only'
     { ref_kind: 'part', part_num: '3001', ldraw_file: '166.dat' },
     { ref_kind: 'unmatched', part_num: null, ldraw_file: '9999x.dat' },
     { ref_kind: 'part', part_num: '3023', ldraw_file: '3023b.dat' },
+    { ref_kind: 'part', part_num: '3001', ldraw_file: '3001x.dat' },
+    { ref_kind: 'segment', part_num: null, ldraw_file: '3001y.dat' },
   ]);
-  assert.equal(s.manifest.placement_match_rate, String(3 / 4));
-  assert.equal(s.manifest.count_placements_part_refs, '4');
-  assert.equal(s.manifest.count_placements_part_resolved, '3');
+  assert.equal(s.manifest.placement_match_rate, String(4 / 5));
+  assert.equal(s.manifest.count_placements_part_refs, '5');
+  assert.equal(s.manifest.count_placements_part_resolved, '4');
   assert.equal(s.manifest.count_placements_suffix_matched, '1');
+  assert.equal(s.manifest.count_placements_alias_resolved, '2');
   assert.equal(s.manifest.count_placements_primitive, '1');
-  assert.equal(s.manifest.count_placements_segment, '1');
-  assert.equal(s.manifest.count_placements_alias_resolved, '1');
+  assert.equal(s.manifest.count_placements_segment, '2');
   assert.equal(s.manifest.count_parts, '20');
 });
 

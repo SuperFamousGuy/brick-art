@@ -163,6 +163,9 @@ function ldrawFixtures(): Map<string, string> {
   f.set('parts/166.dat', ldFile('~Moved to 3001', '166.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat']));
   // A variant file with no Rebrickable part of its own: it maps to Rebrickable 3023 by suffix.
   part('3023b', 'Plate  1 x  2 without Bottom Tube', box(-20, 0, -10, 20, 8, 10));
+  // Variant-named alias and sub-part: neither is suffix-matched to 3001.
+  f.set('parts/3001x.dat', ldFile('~Moved to 166', '3001x.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 166.dat']));
+  part('3001y', '~Brick  2 x  4 Shell', box(-20, 0, -10, 20, 24, 10));
   const colour = (name: string, code: number, rgb: string) =>
     `0 !COLOUR ${name.padEnd(40)} CODE ${String(code).padStart(3)}   VALUE #${rgb}   EDGE #333333`;
   f.set('LDConfig.ldr', [
