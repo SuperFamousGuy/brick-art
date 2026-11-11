@@ -42,10 +42,17 @@ Install the plugin:
 
 ### First run
 
-The first session after you install the plugin builds the parts database in
-the background. The build downloads about 165 MB and takes a few minutes. You
-can keep working while it runs. Until it finishes, the lookup tools report
-"not ready".
+The first session after you install the plugin downloads a published parts
+database from the brick-art releases. The download takes seconds, and the
+lookup tools are ready as soon as it finishes. If the download fails, the
+plugin builds a smaller database locally from the source data. That build
+downloads about 165 MB and takes a few minutes. You can keep working while
+it runs. Until a database is ready, the lookup tools report "not ready".
+
+The plugin asks one question at install: **Download fan-made designs**. The
+default is off. When you turn it on, the database also includes community
+designs from brick-art's curated list, with positions and build steps. It
+adds about N MB to the download.
 
 The database lives in the plugin data folder. Claude Code removes it when you
 uninstall the plugin.
@@ -69,14 +76,20 @@ colors.
 
 ## Refresh the data
 
-To rebuild the database from the latest source data, run:
+To download the latest published database, run:
 
 ```
 /brick-art:reseed
 ```
 
-The refresh runs in the background. Claude reports the database status when
-it finishes.
+To rebuild the database on your machine from the source data instead, run:
+
+```
+/brick-art:reseed --local
+```
+
+Both commands run in the background. Claude reports the database status when
+the refresh finishes.
 
 ## Development
 
@@ -113,27 +126,34 @@ On macOS and Linux, `bin/brick-art-seed` is a shortcut for the same command.
 
 ## Data sources and attribution
 
+Data sourced from [Rebrickable](https://rebrickable.com) (rebrickable.com).
+
 brick-art builds its database from these sources:
 
-- Part data from [Rebrickable](https://rebrickable.com) (rebrickable.com).
+- Part, color, set, and set parts list data from Rebrickable.
 - Part geometry from [The LDraw Parts Library](https://www.ldraw.org)
   (ldraw.org), licensed CC BY 4.0 / CC BY 2.0.
 - Connection data from the
   [LDCad Shadow Library](https://github.com/RolandMelkert/LDCadShadowLibrary)
   by Roland Melkert, licensed CC BY-SA 4.0.
+- Part positions and build steps for official sets from the
+  [LDraw Official Model Repository (OMR)](https://library.ldraw.org/omr)
+  and its authors. Only models with an open license are used. Each author is
+  credited in `CREDITS.md`.
+- Fan-made designs from [Datsville](https://github.com/Datsville), when you
+  turn on the fan-made option.
 
-The plugin downloads this data to your machine when it builds the database.
-It does not redistribute the data.
+### Database license
 
-### Release note for maintainers
-
-A person must check Rebrickable's terms of use before the first public
-release.
+The published database is licensed
+[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Each release
+includes a `CREDITS.md` file that lists every source and every OMR author.
 
 ## Status
 
-Early development. The parts database and lookup tools work. The model
-format and the rendering pipeline are not built yet.
+Early development. The parts and project databases and the lookup tools
+work, and CI publishes the database. The model format and the rendering
+pipeline are not built yet.
 
 ## Disclaimer
 
