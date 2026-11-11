@@ -13,6 +13,8 @@ import { findByUse } from '../lookup/find-by-use.ts';
 import { findCompatible } from '../lookup/find-compatible.ts';
 import { searchProjects } from '../lookup/search-projects.ts';
 import { getProject } from '../lookup/get-project.ts';
+import { getSubmodel } from '../lookup/get-submodel.ts';
+import { readUpdateState } from '../release/download.ts';
 import { findSubstitutes } from '../lookup/find-substitutes.ts';
 import { TRAITS } from '../derive/traits.ts';
 import type { ConnectionType } from '../types.ts';
@@ -219,6 +221,31 @@ export function createServer(dataDir: string): McpServer {
   );
 
   server.registerTool(
+    'get_submodel',
+    {
+      description: `Returns the placed parts of one sub-assembly step by step (part, color, position, and rotation matrix). Transforms are in LDraw units (stud 20, plate 8, y axis down) and relative to the requested sub-assembly's origin. Steps come back whole, up to maxPlacements; continue from nextStep. ${CREDIT}`,
+      inputSchema: {
+        submodelId: int.describe('Sub-assembly id from get_project.'),
+        flatten: z.boolean().optional()
+          .describe('Expand child sub-assemblies in place, at their parent step, with composed transforms and inherited colors (default false).'),
+        fromStep: int.min(1).optional().describe('First step to return (default 1).'),
+        maxPlacements: int.min(1).max(1000).optional()
+          .describe('Maximum placements to return across whole steps (default 300, at most 1000); a first step over the cap is still returned.'),
+      },
+    },
+    (args: { submodelId: number; flatten?: boolean; fromStep?: number; maxPlacements?: number }): ToolResult => {
+      try {
+        const db = current.get();
+        if (db === null) return notReady();
+        const result = getSubmodel(db, args);
+        return result === null ? fail(`No sub-assembly with id ${args.submodelId}.`) : ok(result);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
     'database_status',
     {
       description: 'Returns the parts database state, seed time, source versions, row counts, and any warnings; works before seeding finishes.',
@@ -226,7 +253,7 @@ export function createServer(dataDir: string): McpServer {
     },
     (): ToolResult => {
       try {
-        return ok(databaseStatus(current.get(), readState(statePath), isLockHeld(lockPath)));
+        return ok(databaseStatus(current.get(), readState(statePath), isLockHeld(lockPath), readUpdateState(dataDir)));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

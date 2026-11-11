@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { runSeed } from '../../src/seed/seed.ts';
 import { readPointer } from '../../src/db/open.ts';
 import type { SeedState } from '../../src/seed/lock.ts';
+import type { UpdateState } from '../../src/release/download.ts';
 import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
 import { searchParts } from '../../src/lookup/search-parts.ts';
 import { getPart } from '../../src/lookup/get-part.ts';
@@ -103,22 +104,24 @@ test('listColors excludes placeholders and filters by part', () => {
   assert.deepEqual(listColors(db, { partNum: '3001' }).map((c) => c.id).sort((a, b) => a - b), [0, 2, 4]);
 });
 
+const NO_UPDATE: UpdateState = { lastCheckedAt: null, releaseTag: null, variant: null, origin: null, lastError: null };
+
 test('databaseStatus', () => {
   const failed: SeedState = { status: 'failed', startedAt: null, finishedAt: null, lastError: 'boom', failures: 1 };
-  const s = databaseStatus(null, failed, false);
+  const s = databaseStatus(null, failed, false, NO_UPDATE);
   assert.equal(s.state, 'failed');
   assert.equal(s.lastError, 'boom');
   assert.equal(s.seededAt, null);
   const ready: SeedState = { status: 'ready', startedAt: null, finishedAt: null, lastError: null, failures: 0 };
-  const r = databaseStatus(db, ready, false);
+  const r = databaseStatus(db, ready, false, NO_UPDATE);
   assert.equal(r.state, 'ready');
   assert.equal(r.counts.parts, 20);
   assert.equal(r.ldrawRelease, '2026-10');
   const seeding: SeedState = { ...ready, status: 'seeding' };
-  assert.equal(databaseStatus(db, seeding, true).state, 'seeding');
+  assert.equal(databaseStatus(db, seeding, true, NO_UPDATE).state, 'seeding');
   // A seeding state without a held lock is a crashed seed: report what exists.
-  assert.equal(databaseStatus(db, seeding, false).state, 'ready');
-  assert.equal(databaseStatus(null, seeding, true).state, 'seeding');
-  assert.equal(databaseStatus(null, seeding, false).state, 'idle');
-  assert.equal(databaseStatus(null, { ...seeding, lastError: 'boom' }, false).state, 'failed');
+  assert.equal(databaseStatus(db, seeding, false, NO_UPDATE).state, 'ready');
+  assert.equal(databaseStatus(null, seeding, true, NO_UPDATE).state, 'seeding');
+  assert.equal(databaseStatus(null, seeding, false, NO_UPDATE).state, 'idle');
+  assert.equal(databaseStatus(null, { ...seeding, lastError: 'boom' }, false, NO_UPDATE).state, 'failed');
 });
