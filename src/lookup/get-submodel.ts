@@ -20,7 +20,7 @@ export interface SubmodelResult {
   submodel: { id: number; projectId: number; name: string; stepCount: number | null };
   steps: { step: number; placements: PlacementOut[] }[];
   nextStep: number | null;
-  /** True when expansion hit the work budget or the depth limit, so some placements are missing. */
+  /** True when expansion hit the emission or work budget or the depth limit, so some placements are missing. */
   truncated: boolean;
 }
 
@@ -29,8 +29,13 @@ const CAP_MAX = 1000;
 const MAX_DEPTH = 32;
 /** Hard cap on placements emitted for one response, applied during expansion. */
 export const EXPANSION_LIMIT = 5000;
+/** Hard cap on placement rows visited for one response, including references to empty submodels. */
+export const WORK_LIMIT = 20000;
 
-interface Budget { count: number; limit: number; truncated: boolean }
+/** Counters from the most recent call, for tests: placement rows visited and child placement queries run. */
+export const submodelWork = { visits: 0, queries: 0 };
+
+interface Budget { count: number; limit: number; truncated: boolean; exhausted: boolean }
 const INHERIT = 16;
 
 const mul = (a: Mat3, b: Mat3): Mat3 => {
@@ -78,16 +83,32 @@ export function getSubmodel(
     }
     return names.get(id) ?? null;
   };
-  const childSteps = db.prepare('SELECT DISTINCT step FROM placements WHERE submodel_id = ? ORDER BY step');
   const rowsOf = db.prepare('SELECT * FROM placements WHERE submodel_id = ? AND step = ? ORDER BY seq');
+  const childRowsOf = db.prepare('SELECT * FROM placements WHERE submodel_id = ? ORDER BY step, seq');
+  const childRows = new Map<number, Row[]>();
+  submodelWork.visits = 0;
+  submodelWork.queries = 0;
+  const rowsOfChild = (id: number): Row[] => {
+    let rows = childRows.get(id);
+    if (!rows) {
+      submodelWork.queries++;
+      rows = childRowsOf.all(id) as Row[];
+      childRows.set(id, rows);
+    }
+    return rows;
+  };
+  let work = 0;
 
   const emit = (
     out: PlacementOut[], budget: Budget, row: Row, parentColor: number | null, parentPos: Vec3, parentMatrix: Mat3, depth: number,
   ): void => {
-    if (budget.count >= budget.limit) {
+    if (budget.count >= budget.limit || work >= WORK_LIMIT) {
       budget.truncated = true;
+      budget.exhausted = true;
       return;
     }
+    work++;
+    submodelWork.visits = work;
     const local = JSON.parse(row.matrix) as Mat3;
     const rel = apply(parentMatrix, [row.x, row.y, row.z]);
     const pos: Vec3 = [parentPos[0] + rel[0], parentPos[1] + rel[1], parentPos[2] + rel[2]];
@@ -95,10 +116,9 @@ export function getSubmodel(
     const colorId: number | null = row.color_id ?? (row.ldraw_color === INHERIT ? parentColor : null);
     if (flatten && row.child_submodel_id !== null && depth >= MAX_DEPTH) budget.truncated = true;
     if (flatten && row.child_submodel_id !== null && depth < MAX_DEPTH) {
-      for (const step of childSteps.all(row.child_submodel_id) as { step: number }[]) {
-        for (const child of rowsOf.all(row.child_submodel_id, step.step) as Row[]) {
-          emit(out, budget, child, colorId, pos, matrix, depth + 1);
-        }
+      for (const child of rowsOfChild(row.child_submodel_id)) {
+        emit(out, budget, child, colorId, pos, matrix, depth + 1);
+        if (budget.exhausted) return;
       }
       return;
     }
@@ -121,9 +141,10 @@ export function getSubmodel(
   for (let i = 0; i < stepNums.length; i++) {
     const { step } = stepNums[i]!;
     const placements: PlacementOut[] = [];
-    const budget: Budget = { count: 0, limit: EXPANSION_LIMIT - total, truncated: false };
+    const budget: Budget = { count: 0, limit: EXPANSION_LIMIT - total, truncated: false, exhausted: false };
     for (const row of rowsOf.all(a.submodelId, step) as Row[]) {
       emit(placements, budget, row, null, [0, 0, 0], IDENTITY, 0);
+      if (budget.exhausted) break;
     }
     if (steps.length > 0 && total + placements.length > max) {
       nextStep = step;

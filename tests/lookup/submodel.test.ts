@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { seedFixture } from '../helpers/seeded.ts';
-import { EXPANSION_LIMIT, getSubmodel } from '../../src/lookup/get-submodel.ts';
+import { EXPANSION_LIMIT, WORK_LIMIT, getSubmodel, submodelWork } from '../../src/lookup/get-submodel.ts';
 import { databaseStatus } from '../../src/lookup/status.ts';
 import type { UpdateState } from '../../src/release/download.ts';
 import type { SeedState } from '../../src/seed/lock.ts';
@@ -235,4 +235,17 @@ test('nesting deeper than 32 levels reports truncation', () => {
 
 test('a non-finite maxPlacements falls back to the default', () => {
   assert.equal(getSubmodel(big, { submodelId: bigId, maxPlacements: NaN })!.steps.length, 15);
+});
+
+test('references to empty submodels consume the work budget and report truncation', () => {
+  addSub(930001, []);
+  addSub(930002, [[...Array.from({ length: 200 }, () => ({ child: 930001 }))]]);
+  addSub(930003, [[...Array.from({ length: 200 }, () => ({ child: 930002 }))], [{ part: '3001' }]]);
+  const t0 = Date.now();
+  const r = getSubmodel(big, { submodelId: 930003, flatten: true })!;
+  assert.ok(Date.now() - t0 < 2000);
+  assert.equal(r.truncated, true);
+  assert.equal(r.nextStep, 2);
+  assert.ok(submodelWork.visits <= WORK_LIMIT + 1);
+  assert.ok(submodelWork.queries <= 10, `queries: ${submodelWork.queries}`);
 });
