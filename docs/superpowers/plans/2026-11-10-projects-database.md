@@ -370,7 +370,7 @@ New manifest keys: `variant`, `built_by` (`ci`/`local`), `placement_match_rate`,
   2. `actions/setup-node` with Node `22`.
   3. `npm ci`.
   4. `actions/cache` on `.data/cache`, with key `sources-${{ github.run_id }}` and restore-keys `sources-`.
-  5. `node --max-old-space-size=3072 src/entry/release.mjs --out out`, capturing the tag.
+  5. `node --max-old-space-size=3072 src/entry/release.mjs --out .data/out`, capturing the tag.
   6. If a release with that tag exists, delete it with `gh release delete "$TAG" --yes --cleanup-tag`.
   7. `gh release create "$TAG" out/* --prerelease --latest=false --title "Data $TAG" --notes-file out/CREDITS.md`.
   8. `node src/release/prune.ts`.

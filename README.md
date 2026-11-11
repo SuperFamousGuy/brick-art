@@ -70,7 +70,7 @@ Claude uses these tools to choose real parts and to find existing designs:
 | `find_compatible_parts` | Find parts that connect to a given part. |
 | `find_substitutes` | Find alternates for a part in a color it does not come in. |
 | `list_colors` | List the available colors. |
-| `search_projects` | Search official sets and fan models by name, theme, year, kind, size, or part. Projects with build positions come first. |
+| `search_projects` | Search official sets and fan models by name, theme, year, kind, part count, or part. Projects with build positions come first. |
 | `get_project` | Get one project's parts with colors and quantities, and its sub-assemblies. |
 | `get_submodel` | Get the placed parts of one sub-assembly step by step, with colors, positions, and rotations. |
 | `database_status` | Check whether the database is ready, when it was built, and its source versions. |
@@ -120,6 +120,14 @@ Load the plugin from your working copy:
 claude --plugin-dir .
 ```
 
+With `--plugin-dir`, Claude Code does not prompt for the plugin options. To
+turn on fan-made designs in development, set `BRICK_ART_FAN_PROJECTS` when you
+start Claude Code. It applies to that session only and is not saved:
+
+```
+BRICK_ART_FAN_PROJECTS=true claude --plugin-dir .
+```
+
 In development, the database goes in `.data/` in the repository. Git ignores
 that folder. To build it by hand, run:
 
@@ -127,7 +135,9 @@ that folder. To build it by hand, run:
 node src/entry/seed.mjs
 ```
 
-On macOS and Linux, `bin/brick-art-seed` is a shortcut for the same command.
+This builds the `fallback` variant: set parts lists without build positions.
+To build another variant, pass `--variant standard` or `--variant full`. On
+macOS and Linux, `bin/brick-art-seed` is a shortcut for the same command.
 
 ## Data sources and attribution
 

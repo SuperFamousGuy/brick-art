@@ -183,7 +183,7 @@ export function createServer(dataDir: string): McpServer {
   server.registerTool(
     'search_projects',
     {
-      description: `Returns existing projects (official LEGO sets and fan models) matching name, theme, year, kind, size, and part filters; projects with build positions come first. ${CREDIT}`,
+      description: `Returns existing projects (official LEGO sets and fan models) matching name, theme, year, kind, part count, and part filters; projects with build positions come first. ${CREDIT}`,
       inputSchema: {
         nameContains: z.string().optional()
           .describe('Case-insensitive substring of the project name; an exact name match ranks first.'),

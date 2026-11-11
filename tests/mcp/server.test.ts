@@ -170,6 +170,9 @@ test('project tools work on a seeded standard database and report unknown ids', 
       const t = tools.find((x) => x.name === name)!;
       assert.match(t.description ?? '', /author, license, and URL/);
     }
+    const search = tools.find((x) => x.name === 'search_projects')!.description ?? '';
+    assert.match(search, /part count/);
+    assert.doesNotMatch(search, /\bsize\b/);
     await close();
   } finally {
     await seeded.close();
