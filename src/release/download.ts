@@ -45,6 +45,8 @@ export interface UpdateState {
   variant: Variant | null;
   /** What the updater last did. Informational: the database's origin comes from its manifest (`originOf`). */
   origin: 'release' | 'local' | null;
+  /** The installed release database's sha256 (release.json `dbSha256`), so a same-tag rebuild is detected. */
+  installedSha256: string | null;
   lastError: string | null;
 }
 
@@ -132,7 +134,9 @@ export async function findRelease(
 }
 
 const updatePath = (dataDir: string) => join(dataDir, 'update.json');
-const EMPTY: UpdateState = { lastCheckedAt: null, releaseTag: null, variant: null, origin: null, lastError: null };
+const EMPTY: UpdateState = {
+  lastCheckedAt: null, releaseTag: null, variant: null, origin: null, installedSha256: null, lastError: null,
+};
 
 /** Reads `<dataDir>/update.json`; a missing or unreadable file is the empty state. */
 export function readUpdateState(dataDir: string): UpdateState {
@@ -147,6 +151,7 @@ export function readUpdateState(dataDir: string): UpdateState {
       releaseTag: str(raw.releaseTag),
       variant: variant === 'fallback' || variant === 'standard' || variant === 'full' ? variant : null,
       origin: origin === 'release' || origin === 'local' ? origin : null,
+      installedSha256: str(raw.installedSha256),
       lastError: str(raw.lastError),
     };
   } catch {
@@ -266,27 +271,32 @@ function meter(what: string, maxBytes: number, touch?: () => void) {
   return { stream, verify };
 }
 
+function assetUrl(release: ReleaseInfo, name: string): string {
+  const url = release.assets.get(name);
+  if (url === undefined) throw new Error(`release ${release.tag} has no ${name}`);
+  return url;
+}
+
+/** Fetches and validates `variant`'s entry in `release`'s release.json. */
+async function fetchVariantMeta(release: ReleaseInfo, variant: string): Promise<VariantMeta> {
+  return variantMeta(await guarded('release.json', async (guard) => {
+    const res = await get(assetUrl(release, 'release.json'), guard.signal);
+    if (!res.ok) return fail(res, 'release.json');
+    return res.text();
+  }), release.tag, variant);
+}
+
 /**
- * Downloads and verifies `variant` of `release`, then points the data dir at it.
- * On any failure the partial files and the unpointed database are removed.
+ * Downloads and verifies `variant` of `release` as described by `meta`, then points the data dir at
+ * it. On any failure the partial files and the unpointed database are removed.
  */
 async function installRelease(
-  dataDir: string, release: ReleaseInfo, variant: string, log: (msg: string) => void,
+  dataDir: string, release: ReleaseInfo, variant: string, meta: VariantMeta, log: (msg: string) => void,
 ): Promise<void> {
-  const asset = (name: string) => {
-    const url = release.assets.get(name);
-    if (url === undefined) throw new Error(`release ${release.tag} has no ${name}`);
-    return url;
-  };
+  const asset = (name: string) => assetUrl(release, name);
   const gzPart = join(dataDir, DOWNLOAD_PART);
   let dbFile: string | null = null;
   try {
-    const meta = variantMeta(await guarded('release.json', async (guard) => {
-      const res = await get(asset('release.json'), guard.signal);
-      if (!res.ok) return fail(res, 'release.json');
-      return res.text();
-    }), release.tag, variant);
-
     await guarded(meta.file, async (guard) => {
       const res = await get(asset(meta.file), guard.signal);
       if (!res.ok || !res.body) return fail(res, meta.file);
@@ -385,13 +395,18 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
     try {
       const release = await findRelease(SEED_VERSION, opts.apiBase);
       if (release === null) throw new Error(`no published release for schema ${SEED_VERSION}`);
+      // A same-day rebuild reuses the tag, so the content hash decides whether the install is current.
+      const meta = await fetchVariantMeta(release, opts.variant);
       if (!opts.force && release.tag === next.releaseTag && next.variant === opts.variant &&
+        next.installedSha256 === meta.dbSha256 &&
         dbStatus(dataDir) === 'usable' && installedOrigin(dataDir) === 'release') {
         result = { outcome: 'current', tag: release.tag };
       } else {
         log(`downloading ${opts.variant} from ${release.tag}`);
-        await installRelease(dataDir, release, opts.variant, log);
-        Object.assign(next, { releaseTag: release.tag, variant: opts.variant, origin: 'release' });
+        await installRelease(dataDir, release, opts.variant, meta, log);
+        Object.assign(next, {
+          releaseTag: release.tag, variant: opts.variant, origin: 'release', installedSha256: meta.dbSha256,
+        });
         result = { outcome: 'updated', tag: release.tag };
       }
     } catch (err) {
@@ -418,7 +433,7 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
     await (opts.runSeedImpl ?? runSeed)({
       refresh: false, ...opts.seed, dataDir, repoRoot: opts.repoRoot, variant: 'fallback', skipLock: true,
     });
-    Object.assign(next, { releaseTag: null, variant: 'fallback', origin: 'local' });
+    Object.assign(next, { releaseTag: null, variant: 'fallback', origin: 'local', installedSha256: null });
     return { outcome: 'fallback_seeded', tag: null };
   } catch (err) {
     next.lastError = errText(err);

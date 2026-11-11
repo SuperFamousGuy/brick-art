@@ -110,10 +110,13 @@ test('runUpdate downloads the release, then reports current, then switches varia
   assert.equal(readState(dataPaths(dataDir).state).status, 'ready');
   assert.equal(existsSync(dataPaths(dataDir).lock), false);
 
-  const hitsBefore = assetHits(server.hits);
+  const meta = JSON.parse(assets.get('release.json')!.toString('utf8'));
+  assert.equal(state.installedSha256, meta.variants.standard.dbSha256);
+  const gzHits = () => server.hits.get(`/download/${TAG}/standard.db.gz`) ?? 0;
+  const gzBefore = gzHits();
   const second = await runUpdate({ ...opts, variant: 'standard' });
   assert.deepEqual(second, { outcome: 'current', tag: TAG });
-  assert.equal(assetHits(server.hits), hitsBefore);
+  assert.equal(gzHits(), gzBefore);
 
   const third = await runUpdate({ ...opts, variant: 'full' });
   assert.deepEqual(third, { outcome: 'updated', tag: TAG });
@@ -246,6 +249,37 @@ async function releaseWithManifest(t: T, key: string, value: string): Promise<Fa
   meta.variants.standard = { ...meta.variants.standard, gzSha256: sha(gz), gzBytes: gz.length, dbSha256: sha(raw), dbBytes: raw.length };
   return release(TAG, { 'standard.db.gz': gz, 'release.json': JSON.stringify(meta) });
 }
+
+test('a same-day rebuild under the same tag is downloaded; an unchanged one is current', async (t) => {
+  const first = await serve(t, [release()]);
+  const dataDir = await seededDataDir(t);
+  const opts = { dataDir, repoRoot, runSeedImpl: throwingSeed, variant: 'standard' as const };
+  assert.deepEqual(await runUpdate({ ...opts, apiBase: first.url }), { outcome: 'updated', tag: TAG });
+  const installed = readPointer(dataDir);
+
+  const rebuilt = await serve(t, [await releaseWithManifest(t, 'started_at', '2026-11-17T20:00:00.000Z')]);
+  assert.deepEqual(await runUpdate({ ...opts, apiBase: rebuilt.url }), { outcome: 'updated', tag: TAG });
+  assert.notEqual(readPointer(dataDir), installed);
+  assert.equal(manifest(dataDir, 'started_at'), '2026-11-17T20:00:00.000Z');
+  assert.equal(rebuilt.hits.get(`/download/${TAG}/standard.db.gz`), 1);
+
+  assert.deepEqual(await runUpdate({ ...opts, apiBase: rebuilt.url }), { outcome: 'current', tag: TAG });
+  assert.equal(rebuilt.hits.get(`/download/${TAG}/standard.db.gz`), 1);
+});
+
+test('an update.json without installedSha256 is not current', async (t) => {
+  const server = await serve(t, [release()]);
+  const dataDir = await seededDataDir(t);
+  const opts = { dataDir, repoRoot, runSeedImpl: throwingSeed, variant: 'standard' as const, apiBase: server.url };
+  assert.deepEqual(await runUpdate(opts), { outcome: 'updated', tag: TAG });
+  const file = join(dataDir, 'update.json');
+  const raw = JSON.parse(await readFile(file, 'utf8'));
+  delete raw.installedSha256;
+  await writeFile(file, JSON.stringify(raw));
+  assert.equal(readUpdateState(dataDir).installedSha256, null);
+  assert.deepEqual(await runUpdate(opts), { outcome: 'updated', tag: TAG });
+  assert.deepEqual(await runUpdate(opts), { outcome: 'current', tag: TAG });
+});
 
 for (const [key, value] of [['seed_version', '2'], ['variant', 'full']] as const) {
   test(`a verified download whose manifest ${key} is wrong is rejected`, async (t) => {

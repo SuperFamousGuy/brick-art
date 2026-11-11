@@ -108,7 +108,7 @@ test('unknown submodel returns null', () => {
 
 const ready: SeedState = { status: 'ready', startedAt: null, finishedAt: null, lastError: null, failures: 0 };
 const update: UpdateState = {
-  lastCheckedAt: null, releaseTag: 'data-3-20261117', variant: 'standard', origin: 'release', lastError: null,
+  lastCheckedAt: null, releaseTag: 'data-3-20261117', variant: 'standard', origin: 'release', installedSha256: null, lastError: null,
 };
 
 test('status on a fallback database warns and reports a local origin without a release tag', () => {

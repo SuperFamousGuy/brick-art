@@ -104,7 +104,7 @@ test('listColors excludes placeholders and filters by part', () => {
   assert.deepEqual(listColors(db, { partNum: '3001' }).map((c) => c.id).sort((a, b) => a - b), [0, 2, 4]);
 });
 
-const NO_UPDATE: UpdateState = { lastCheckedAt: null, releaseTag: null, variant: null, origin: null, lastError: null };
+const NO_UPDATE: UpdateState = { lastCheckedAt: null, releaseTag: null, variant: null, origin: null, installedSha256: null, lastError: null };
 
 test('databaseStatus', () => {
   const failed: SeedState = { status: 'failed', startedAt: null, finishedAt: null, lastError: 'boom', failures: 1 };

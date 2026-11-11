@@ -50,7 +50,7 @@ async function withDb(
   db.close();
   if (update) {
     writeUpdateState(s.dataDir, {
-      lastCheckedAt: null, releaseTag: null, variant: null, origin: null, lastError: null, ...update,
+      lastCheckedAt: null, releaseTag: null, variant: null, origin: null, installedSha256: null, lastError: null, ...update,
     });
   }
   return s;
