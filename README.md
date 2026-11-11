@@ -43,8 +43,9 @@ Install the plugin:
 ### First run
 
 The first session after you install the plugin downloads a published parts
-database from the brick-art releases. The download takes seconds, and the
-lookup tools are ready as soon as it finishes. If the download fails, the
+database from the brick-art releases. The standard database is about a 55 MB download and takes about 205 MB on
+disk. The download takes seconds, and the lookup tools are ready as soon as it
+finishes. If the download fails, the
 plugin builds a smaller database locally from the source data. That build
 downloads about 165 MB and takes a few minutes. You can keep working while
 it runs. Until a database is ready, the lookup tools report "not ready".
@@ -52,7 +53,7 @@ it runs. Until a database is ready, the lookup tools report "not ready".
 The plugin asks one question at install: **Download fan-made designs**. The
 default is off. When you turn it on, the database also includes community
 designs from brick-art's curated list, with positions and build steps. It
-adds about N MB to the download.
+adds about 8 MB to the download.
 
 The database lives in the plugin data folder. Claude Code removes it when you
 uninstall the plugin.

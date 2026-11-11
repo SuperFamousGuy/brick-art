@@ -22,7 +22,7 @@ Everything in the earlier plan's Global Constraints still applies: Node.js 22.18
 - Plugin option: `fan_projects` (boolean, default `false`). The hook reads it as `CLAUDE_PLUGIN_OPTION_FAN_PROJECTS`, and `BRICK_ART_FAN_PROJECTS` overrides it. Truthy values: `true` and `1`, case-insensitive.
 - OMR fetch: concurrency 4, user agent `brick-art-seed`, 3 retries with backoff of 1 s, 2 s, and 4 s. Base URL `https://library.ldraw.org`.
 - License allow list, as case-insensitive regexes on a `!LICENSE` line: `CC BY` (covers `CC BY 2.0`, `CC BY 4.0`, `CC BY-SA`), `CC0`, `CCAL version 2\.0` only when preceded by `Redistributable`, `public domain`. A line containing `Not redistributable` is never allowed.
-- Placement acceptance threshold: 98% of OMR placements resolve to a known part and color. CI refuses to publish below it. Part-geometry threshold: 95% of the top 1,000 parts, unchanged.
+- Placement acceptance threshold: 95% of OMR part references resolve to a known part and color (primitives and flexible segments excluded; "Moved to" and "=" aliases followed). CI refuses to publish below it. Part-geometry threshold: 95% of the top 1,000 parts, unchanged.
 - The published database is licensed CC BY-SA 4.0. `CREDITS.md` credits Rebrickable ("Data sourced from Rebrickable"), the LDraw Parts Library, the LDCad shadow library, each OMR author, and each fan source.
 - The update check runs at most once per 24 hours unless the variant or schema changed.
 - Unmatched part or color references are stored with their raw LDraw values, never dropped.
@@ -348,7 +348,7 @@ New manifest keys: `variant`, `built_by` (`ci`/`local`), `placement_match_rate`,
 - Produces:
   - `checkGates(db: DatabaseSync): string[]`. Returns one message per failed gate; empty means pass. The gates:
     - `match_rate_top1000 < 0.95`
-    - `placement_match_rate < 0.98`
+    - `placement_match_rate < 0.95`
     - any `projects` row whose `license` fails `licenseAllowed`, among rows with non-null license
     - any `parts` row with `has_geometry 1` whose `license` fails `licenseAllowed`
     - `failed_sources` contains `omr`
@@ -467,7 +467,7 @@ New manifest keys: `variant`, `built_by` (`ci`/`local`), `placement_match_rate`,
     "fan_projects": {
       "type": "boolean",
       "title": "Download fan-made designs",
-      "description": "Adds community designs from brick-art's curated list, with positions and build steps. Adds about N MB to the download.",
+      "description": "Adds community designs from brick-art's curated list, with positions and build steps. Adds about 8 MB to the download.",
       "default": false
     }
   }

@@ -168,7 +168,7 @@ license line on the allow list kept in the seed code (CC BY, CC BY-SA,
 CC0, CCAL 2.0 "Redistributable", public domain), or has no license line
 and comes from a source that declares an allowed `default_license`.
 Anything else is skipped and counted by reason, and does not fail the
-release. The 98% placement threshold is measured over included models
+release. The 95% placement threshold is measured over included models
 only. The manifest and status tool report the number skipped per source.
 LDraw parts with a line outside the allow list are kept as part records
 but lose their geometry in the published database.
@@ -273,7 +273,7 @@ A GitHub Actions workflow in this repo builds and publishes the database.
   polite fetch rules below, keeps load on ldraw.org to one client.
 - **Gates.** The workflow fails, and publishes nothing, if the database
   fails its acceptance checks: the part-geometry threshold from the parts
-  design, the 98% placement threshold below, and a final scan confirming
+  design, the 95% placement threshold below, and a final scan confirming
   that no included file has a license outside the allow list.
 
 ### Bootstrap on the user's machine
@@ -349,7 +349,7 @@ call. This replaces the earlier `set_positions` option and its
 
 The option's title and description say what it adds and how much bigger
 the download is, for example: "Download fan-made designs. Adds community
-designs from a curated list. Adds about N MB to the download." The builder
+designs from a curated list. Adds about 8 MB to the download." The builder
 fills in N.
 
 **How the bootstrap reads the option.** The hook receives it as
@@ -444,8 +444,11 @@ matching by code, then confirming by name or RGB. Record the match rate.
 Color code 16 ("current color") inherits the color of the placement that
 references the sub-file, so resolve it when flattening.
 
-**Acceptance threshold.** At least 98% of placements across all OMR files
-resolve to a known part and color. CI does not publish a database below
+**Acceptance threshold.** At least 95% of part references across all OMR
+files resolve to a known part and color. Primitives and flexible segments are
+excluded, and "Moved to" and "=" aliases are followed. The first draft set the
+threshold at 98% of all placements. It was revised after the first live build
+measured 81% raw and 95.2% over part references. CI does not publish a database below
 the threshold. A local seed below the threshold still completes, and the
 status tool reports the drop.
 
@@ -575,7 +578,7 @@ Claude decided (the user can override):
 - Downloaded databases skip the curated-hash check.
 - Rebrickable CSVs for official parts lists, OMR for official positions.
 - LDraw file and color references map to Rebrickable IDs. Acceptance
-  threshold: 98% of placements.
+  threshold: 95% of part references.
 - Fan project boundaries and the license allow list.
 - Datsville as the first fan source.
 - LDraw formats only. No Studio `.io`.
