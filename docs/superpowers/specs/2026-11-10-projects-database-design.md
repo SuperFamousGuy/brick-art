@@ -448,7 +448,12 @@ references the sub-file, so resolve it when flattening.
 files resolve to a known part and color. Primitives and flexible segments are
 excluded, and "Moved to" and "=" aliases are followed. The first draft set the
 threshold at 98% of all placements. It was revised after the first live build
-measured 81% raw and 95.2% over part references. CI does not publish a database below
+measured 81% raw. The metric is resolved part references over part plus
+unmatched references; sub-assembly references, primitives, and flexible
+segments are excluded from both. After unmatched variant files such as
+`3023b.dat` were mapped to their base part, the live build of 2026-11-11
+measured 95.4% (520,996 of 546,244 part references; 3,798 resolved by
+variant suffix and 4,550 through aliases). CI does not publish a database below
 the threshold. A local seed below the threshold still completes, and the
 status tool reports the drop.
 
