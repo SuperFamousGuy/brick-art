@@ -24,11 +24,18 @@ const builtBy = flag('built-by', ['ci', 'local'], 'local');
 try {
   const { runSeed } = await import('../seed/seed.ts');
   const { resolveDataDir } = await import('../paths.ts');
+  const dataDir = resolveDataDir(process.env, repoRoot);
+  let chosen = variant;
+  if (process.argv.includes('--variant-from-options')) {
+    // For /reseed --local: the variant the plugin options select, saved by the session hook.
+    const { readOptions, variantFor } = await import('../seed/options.ts');
+    chosen = variantFor(readOptions(process.env, dataDir));
+  }
   const result = await runSeed({
-    dataDir: resolveDataDir(process.env, repoRoot),
+    dataDir,
     repoRoot,
     refresh: process.argv.includes('--refresh'),
-    variant,
+    variant: chosen,
     builtBy,
   });
   if (result.dbFile === '') {

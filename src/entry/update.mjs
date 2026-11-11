@@ -7,9 +7,11 @@ assertNodeVersion();
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// --variant-from-options reads the variant from the saved plugin options (for /reseed).
+const fromOptions = process.argv.includes('--variant-from-options');
 const i = process.argv.indexOf('--variant');
-const variant = i === -1 ? 'standard' : process.argv[i + 1];
-if (variant !== 'standard' && variant !== 'full') {
+const flagVariant = i === -1 ? 'standard' : process.argv[i + 1];
+if (!fromOptions && flagVariant !== 'standard' && flagVariant !== 'full') {
   console.error('brick-art update: --variant must be one of standard, full');
   process.exit(2);
 }
@@ -27,6 +29,11 @@ try {
   const dataDir = resolveDataDir(process.env, repoRoot);
   mkdirSync(dataDir, { recursive: true });
   logFile = dataPaths(dataDir).log;
+  let variant = flagVariant;
+  if (fromOptions) {
+    const { readOptions, variantFor } = await import('../seed/options.ts');
+    variant = variantFor(readOptions(process.env, dataDir));
+  }
   const result = await runUpdate({ dataDir, repoRoot, variant, force: process.argv.includes('--force') });
   log(`brick-art update: ${result.outcome}${result.tag ? ` (${result.tag})` : ''}`);
   process.exit(0);
