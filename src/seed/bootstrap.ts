@@ -6,7 +6,7 @@ import { curatedDir, loadCurated } from '../curated/load.ts';
 import { readPointer } from '../db/open.ts';
 import { SEED_VERSION } from '../db/schema.ts';
 import { dataPaths } from '../paths.ts';
-import { readUpdateState } from '../release/download.ts';
+import { originOf, readUpdateState } from '../release/download.ts';
 import type { UpdateState } from '../release/download.ts';
 import { isLockHeld, readState } from './lock.ts';
 import { readOptions, variantFor, writeOptions } from './options.ts';
@@ -14,7 +14,8 @@ import { readOptions, variantFor, writeOptions } from './options.ts';
 export type UpdateReason = 'running' | 'missing' | 'schema' | 'variant' | 'fallback' | 'curated' | 'check_due' | 'ok';
 type Chosen = 'standard' | 'full';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 /** Reads the manifest of the current database, or null when it is absent or unopenable. */
 function readManifest(dataDir: string): Record<string, string> | null {
@@ -34,10 +35,10 @@ function readManifest(dataDir: string): Record<string, string> | null {
   }
 }
 
-/** True when the last update check is missing, unparsable, or older than 24 hours. */
-function checkDue(lastCheckedAt: string | null, now: Date): boolean {
+/** True when the last update check is missing, unparsable, or older than `maxAgeMs`. */
+function checkDue(lastCheckedAt: string | null, now: Date, maxAgeMs: number): boolean {
   const t = lastCheckedAt === null ? NaN : Date.parse(lastCheckedAt);
-  return !Number.isFinite(t) || now.getTime() - t > DAY_MS;
+  return !Number.isFinite(t) || now.getTime() - t > maxAgeMs;
 }
 
 interface Evaluation { reason: UpdateReason; manifest: Record<string, string> | null; update: UpdateState }
@@ -49,18 +50,20 @@ async function evaluate(dataDir: string, repoRoot: string, variant: Chosen, now:
   if (isLockHeld(dataPaths(dataDir).lock)) return result('running');
   if (manifest === null) return result('missing');
   if (manifest.seed_version !== String(SEED_VERSION)) return result('schema');
-  const due = checkDue(update.lastCheckedAt, now);
-  // A fallback is never the chosen variant; it is replaced by the next check that finds a release.
-  if (manifest.variant === 'fallback') return result(due ? 'fallback' : 'ok');
+  // A fallback is never the chosen variant; it is replaced by the next check that finds a release,
+  // so it checks at nearly every session start (at most hourly).
+  if (manifest.variant === 'fallback') return result(checkDue(update.lastCheckedAt, now, HOUR_MS) ? 'fallback' : 'ok');
   if (manifest.variant !== variant) return result('variant');
-  if (!due) return result('ok');
-  // Seeded before update.json existed: no update state, built locally.
-  const local = update.origin === 'local' || (update.origin === null && manifest.built_by === 'local');
+  if (!checkDue(update.lastCheckedAt, now, DAY_MS)) return result('ok');
+  const local = originOf(manifest.built_by) === 'local';
   if (local && manifest.curated_hash !== (await loadCurated(curatedDir(repoRoot))).hash) return result('curated');
   return result('check_due');
 }
 
-/** Whether the background update should run, and why. Never more than one check per 24 hours unless the variant or schema changed. */
+/**
+ * Whether the background update should run, and why. Never more than one check per 24 hours (per hour
+ * for a fallback database) unless the variant or schema changed.
+ */
 export async function needsUpdate(
   dataDir: string,
   repoRoot: string,
@@ -79,7 +82,7 @@ const FIRST_INSTALL = 'brick-art: installing the standard database in the backgr
 const installing = (variant: Chosen) => `brick-art: installing the ${variant} database in the background.`;
 
 function readyLine(manifest: Record<string, string>, update: UpdateState): string {
-  const source = update.origin === 'release' && update.releaseTag ? update.releaseTag : 'local build';
+  const source = originOf(manifest.built_by) === 'release' && update.releaseTag ? update.releaseTag : 'local build';
   const line = `brick-art: database ready (${manifest.variant ?? '?'}, ${manifest.count_parts ?? '?'} parts, ` +
     `${manifest.count_projects_official ?? '?'} sets, ${source}).`;
   return manifest.variant === 'fallback' ? `${line} Build positions arrive with the next published release.` : line;
@@ -87,7 +90,8 @@ function readyLine(manifest: Record<string, string>, update: UpdateState): strin
 
 /**
  * Returns the line for the hook to print; starts a background update of the chosen variant through
- * spawnUpdate when one is needed. Options set through the environment are saved for /reseed.
+ * spawnUpdate when one is needed. The plugin option is saved for /reseed; BRICK_ART_FAN_PROJECTS
+ * applies to this run only.
  */
 export async function bootstrap(
   dataDir: string,
@@ -97,7 +101,7 @@ export async function bootstrap(
 ): Promise<string> {
   try {
     const options = readOptions(env, dataDir);
-    if (options.source === 'env' || options.source === 'plugin') {
+    if (options.source === 'plugin') {
       try { writeOptions(dataDir, options); } catch { /* the hook still runs; /reseed uses the saved value */ }
     }
     const variant = variantFor(options);

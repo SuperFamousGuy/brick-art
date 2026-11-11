@@ -111,22 +111,34 @@ const update: UpdateState = {
   lastCheckedAt: null, releaseTag: 'data-3-20261117', variant: 'standard', origin: 'release', lastError: null,
 };
 
-test('status on a fallback database warns and reports update origin', () => {
+test('status on a fallback database warns and reports a local origin without a release tag', () => {
   const s = databaseStatus(fallback, ready, false, { ...update, variant: 'fallback', origin: 'local' });
   assert.equal(s.variant, 'fallback');
   assert.equal(s.origin, 'local');
-  assert.equal(s.releaseTag, 'data-3-20261117');
+  assert.equal(s.releaseTag, null);
   assert.ok(s.warnings.includes('positions not downloaded (fallback database)'));
   assert.equal(s.placementMatchRate, null);
   assert.deepEqual(s.failedSources, []);
 });
 
 test('status on a standard database reports counts and release info without the warning', () => {
+  big.prepare("UPDATE manifest SET value = 'ci' WHERE key = 'built_by'").run();
+  try {
+    const s = databaseStatus(big, ready, false, update);
+    assert.equal(s.variant, 'standard');
+    assert.equal(s.origin, 'release');
+    assert.equal(s.releaseTag, 'data-3-20261117');
+    assert.ok(!s.warnings.some((w) => w.includes('fallback')));
+    assert.ok((s.counts.projects_official ?? 0) > 0);
+  } finally {
+    big.prepare("UPDATE manifest SET value = 'local' WHERE key = 'built_by'").run();
+  }
+});
+
+test('status after a local reseed reports a local origin even when update.json names a release', () => {
   const s = databaseStatus(std, ready, false, update);
-  assert.equal(s.variant, 'standard');
-  assert.equal(s.origin, 'release');
-  assert.ok(!s.warnings.some((w) => w.includes('fallback')));
-  assert.ok((s.counts.projects_official ?? 0) > 0);
+  assert.equal(s.origin, 'local');
+  assert.equal(s.releaseTag, null);
 });
 
 test('status parses failed_sources and the placement match rate', () => {

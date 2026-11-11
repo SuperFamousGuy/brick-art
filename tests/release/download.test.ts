@@ -125,6 +125,20 @@ test('runUpdate downloads the release, then reports current, then switches varia
   assert.deepEqual(forced, { outcome: 'updated', tag: TAG });
 });
 
+test('a local reseed after a release install is replaced by the same release, not reported current', async (t) => {
+  const server = await serve(t, [release()]);
+  const dataDir = await seededDataDir(t);
+  const opts = { dataDir, repoRoot, apiBase: server.url, runSeedImpl: throwingSeed, variant: 'standard' as const };
+  assert.deepEqual(await runUpdate(opts), { outcome: 'updated', tag: TAG });
+  // `/reseed --local` of the same variant: update.json still names the release, the manifest says local.
+  const db = new DatabaseSync(join(dataDir, readPointer(dataDir)!));
+  db.prepare("UPDATE manifest SET value = 'local' WHERE key = 'built_by'").run();
+  db.close();
+  assert.equal(readUpdateState(dataDir).releaseTag, TAG);
+  assert.deepEqual(await runUpdate(opts), { outcome: 'updated', tag: TAG });
+  assert.equal(manifest(dataDir, 'built_by'), 'ci');
+});
+
 test('a corrupted download keeps the current database and leaves no .part files', async (t) => {
   const gz = Buffer.from(assets.get('standard.db.gz')!);
   gz[Math.floor(gz.length / 2)] ^= 0xff;

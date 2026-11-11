@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { SeedState } from '../seed/lock.ts';
+import { originOf } from '../release/download.ts';
 import type { UpdateState } from '../release/download.ts';
 
 export interface DatabaseStatus {
@@ -29,7 +30,7 @@ export function databaseStatus(
   update: UpdateState,
 ): DatabaseStatus {
   const base = {
-    lastError: state.lastError, warnings: [] as string[], origin: update.origin, releaseTag: update.releaseTag,
+    lastError: state.lastError, warnings: [] as string[], origin: null as DatabaseStatus['origin'], releaseTag: null as string | null,
   };
   const seeding = state.status === 'seeding' && lockHeld;
   if (db === null) {
@@ -42,6 +43,9 @@ export function databaseStatus(
   const m = new Map(
     (db.prepare('SELECT key, value FROM manifest').all() as { key: string; value: string }[]).map((r) => [r.key, r.value]),
   );
+  // The manifest says who built the database; update.json's tag describes it only for a CI build.
+  base.origin = originOf(m.get('built_by'));
+  if (base.origin === 'release') base.releaseTag = update.releaseTag;
   const counts: Record<string, number> = {};
   for (const [k, v] of m) {
     if (k.startsWith('count_') && Number.isFinite(Number(v))) counts[k.slice('count_'.length)] = Number(v);

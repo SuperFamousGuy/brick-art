@@ -40,10 +40,21 @@ export interface ReleaseInfo {
 
 export interface UpdateState {
   lastCheckedAt: string | null;
+  /** The release last installed by the updater; it describes the database only while that is a CI build. */
   releaseTag: string | null;
   variant: Variant | null;
+  /** What the updater last did. Informational: the database's origin comes from its manifest (`originOf`). */
   origin: 'release' | 'local' | null;
   lastError: string | null;
+}
+
+/**
+ * Where a database came from, by its manifest's `built_by`: `ci` is a published release, `local` a
+ * local seed (including `/reseed --local`), anything else unknown. update.json can lag behind a local
+ * reseed, so it never decides this.
+ */
+export function originOf(builtBy: string | null | undefined): 'release' | 'local' | null {
+  return builtBy === 'ci' ? 'release' : builtBy === 'local' ? 'local' : null;
 }
 
 export interface UpdateOptions {
@@ -190,6 +201,16 @@ function dbStatus(dataDir: string): DbStatus {
     return readManifest(join(dataDir, name))?.get('seed_version') === String(SEED_VERSION) ? 'usable' : 'unusable';
   } catch (err) {
     return isPermanentDbError(err) ? 'unusable' : 'unknown';
+  }
+}
+
+/** The origin of the database the pointer names, or null when it cannot be read. */
+function installedOrigin(dataDir: string): 'release' | 'local' | null {
+  try {
+    const name = readPointer(dataDir);
+    return name === null ? null : originOf(readManifest(join(dataDir, name))?.get('built_by'));
+  } catch {
+    return null;
   }
 }
 
@@ -365,7 +386,7 @@ export async function runUpdate(opts: UpdateOptions): Promise<UpdateResult> {
       const release = await findRelease(SEED_VERSION, opts.apiBase);
       if (release === null) throw new Error(`no published release for schema ${SEED_VERSION}`);
       if (!opts.force && release.tag === next.releaseTag && next.variant === opts.variant &&
-        next.origin === 'release' && dbStatus(dataDir) === 'usable') {
+        dbStatus(dataDir) === 'usable' && installedOrigin(dataDir) === 'release') {
         result = { outcome: 'current', tag: release.tag };
       } else {
         log(`downloading ${opts.variant} from ${release.tag}`);

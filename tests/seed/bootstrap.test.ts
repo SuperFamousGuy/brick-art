@@ -35,10 +35,19 @@ async function setup(t: T) {
   return { dir, dataDir: join(dir, 'data') };
 }
 
-/** A data dir holding a copy of the fixture database for `variant`, with `update` as update.json when given. */
-async function withDb(t: T, variant: 'standard' | 'fallback', update?: Partial<UpdateState>) {
+/**
+ * A data dir holding a copy of the fixture database for `variant`, with `update` as update.json when
+ * given. The manifest's built_by is `builtBy`: by default `ci` when `update` records a release install.
+ */
+async function withDb(
+  t: T, variant: 'standard' | 'fallback', update?: Partial<UpdateState>,
+  builtBy: 'ci' | 'local' = update?.origin === 'release' ? 'ci' : 'local',
+) {
   const s = await setup(t);
   await cp(join(templates, variant, 'data'), s.dataDir, { recursive: true });
+  const db = new DatabaseSync(join(s.dataDir, readPointer(s.dataDir)!));
+  db.prepare("UPDATE manifest SET value = ? WHERE key = 'built_by'").run(builtBy);
+  db.close();
   if (update) {
     writeUpdateState(s.dataDir, {
       lastCheckedAt: null, releaseTag: null, variant: null, origin: null, lastError: null, ...update,
@@ -77,13 +86,20 @@ test('first install with default options prints the first-install line and insta
   assert.equal(existsSync(join(s.dataDir, 'options.json')), false);
 });
 
-test('missing database with fan projects on installs full and saves the option', async (t) => {
+test('missing database with BRICK_ART_FAN_PROJECTS on installs full without saving the option', async (t) => {
   const s = await setup(t);
   const r = recorder();
   const line = await bootstrap(s.dataDir, repoRoot, { BRICK_ART_FAN_PROJECTS: 'true' }, r.spawn);
   assert.equal(line, 'brick-art: installing the full database in the background.');
   assert.deepEqual(r.calls, ['full']);
-  assert.deepEqual(JSON.parse(await readFile(join(s.dataDir, 'options.json'), 'utf8')), { fanProjects: true });
+  assert.equal(existsSync(join(s.dataDir, 'options.json')), false);
+});
+
+test('BRICK_ART_FAN_PROJECTS does not overwrite the saved plugin option', async (t) => {
+  const s = await withDb(t, 'standard', released());
+  await writeFile(join(s.dataDir, 'options.json'), JSON.stringify({ fanProjects: false }));
+  await bootstrap(s.dataDir, repoRoot, { BRICK_ART_FAN_PROJECTS: '1', CLAUDE_PLUGIN_OPTION_FAN_PROJECTS: 'false' }, () => {});
+  assert.deepEqual(JSON.parse(await readFile(join(s.dataDir, 'options.json'), 'utf8')), { fanProjects: false });
 });
 
 test('the plugin option is saved to options.json for later /reseed runs', async (t) => {
@@ -129,6 +145,16 @@ test('a local-origin database with a different curated hash is curated when the 
   const s = await withDb(t, 'standard', { origin: 'local', variant: 'standard', lastCheckedAt: null });
   const copy = await editedRepo(s.dir);
   assert.deepEqual(await needsUpdate(s.dataDir, copy, 'standard'), { needed: true, reason: 'curated' });
+});
+
+test('a local reseed over a release install reports a local build and checks curated changes', async (t) => {
+  // update.json still names the release; the manifest says the database was built locally.
+  const s = await withDb(t, 'standard', released(new Date(Date.now() - 25 * HOUR)), 'local');
+  const copy = await editedRepo(s.dir);
+  const r = recorder();
+  assert.deepEqual(await needsUpdate(s.dataDir, copy, 'standard'), { needed: true, reason: 'curated' });
+  assert.match(await bootstrap(s.dataDir, copy, {}, r.spawn), /^brick-art: database ready \(standard, 20 parts, \d+ sets, local build\)\.$/);
+  assert.deepEqual(r.calls, ['standard']);
 });
 
 test('a local-origin database checked within 24 hours is not rechecked for curated changes', async (t) => {
@@ -193,10 +219,17 @@ test('a fallback database gives fallback when the check is due and says position
   assert.deepEqual(r.calls, ['standard']);
 });
 
-test('a fallback database checked within 24 hours is ok, even for another variant', async (t) => {
-  const s = await withDb(t, 'fallback', { origin: 'local', variant: 'fallback', lastCheckedAt: new Date().toISOString() });
+test('a fallback database checked 61 minutes ago is rechecked', async (t) => {
+  const now = new Date();
+  const s = await withDb(t, 'fallback', { origin: 'local', variant: 'fallback', lastCheckedAt: new Date(now.getTime() - 61 * 60 * 1000).toISOString() });
+  assert.deepEqual(await needsUpdate(s.dataDir, repoRoot, 'standard', now), { needed: true, reason: 'fallback' });
+});
+
+test('a fallback database checked 59 minutes ago is ok, even for another variant', async (t) => {
+  const now = new Date();
+  const s = await withDb(t, 'fallback', { origin: 'local', variant: 'fallback', lastCheckedAt: new Date(now.getTime() - 59 * 60 * 1000).toISOString() });
+  assert.deepEqual(await needsUpdate(s.dataDir, repoRoot, 'full', now), { needed: false, reason: 'ok' });
   const r = recorder();
-  assert.deepEqual(await needsUpdate(s.dataDir, repoRoot, 'full'), { needed: false, reason: 'ok' });
   await bootstrap(s.dataDir, repoRoot, { BRICK_ART_FAN_PROJECTS: '1' }, r.spawn);
   assert.deepEqual(r.calls, []);
 });
