@@ -1,0 +1,167 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>brick-art render</title>
+<style>html,body{margin:0;background:#e9e6e1}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/"}}</script>
+</head>
+<body>
+<script type="module">
+// Studio render of an LDraw model: glossy plastic, image-based reflections, soft shadows,
+// and ambient occlusion. The Node side (src/render/render.ts) serves this page and reads
+// each view back through POST /result/<name>.png.
+import * as THREE from 'three';
+import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const post = (path, body) => fetch(path, { method: 'POST', body });
+const fail = (err) => post('/error', String(err && err.stack || err));
+window.addEventListener('error', (e) => fail(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => fail(e.reason));
+
+const job = await (await fetch('/job.json')).json();
+const { width: W, height: H, views } = job;
+const BG = 0xe9e6e1;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.8;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.VSMShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// Without a GPU, Chrome falls back to SwiftShader; trade some softness for speed there.
+const gl = renderer.getContext();
+const info = gl.getExtension('WEBGL_debug_renderer_info');
+const software = /swiftshader/i.test(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : '');
+const Q = software
+  ? { shadowMap: 2048, shadowBlur: 8, aoSamples: 8, passes: 2 }
+  : { shadowMap: 4096, shadowBlur: 24, aoSamples: 24, passes: 4 };
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(BG);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+
+const loader = new LDrawLoader();
+loader.setPartsLibraryPath('/ldraw/');
+await loader.preloadMaterials('/ldraw/LDConfig.ldr');
+loader.smoothNormals = true;
+const model = await loader.loadAsync('/model/' + encodeURIComponent(job.model));
+
+model.rotation.x = Math.PI; // LDraw is y-down
+model.traverse((o) => {
+  if (o.isLineSegments) o.visible = false;
+  if (!o.isMesh) return;
+  o.castShadow = true;
+  o.receiveShadow = true;
+  for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+    if (m.isMeshStandardMaterial) { m.roughness = 0.28; m.metalness = 0; m.envMapIntensity = 0.7; }
+  }
+});
+scene.add(model);
+
+const box = new THREE.Box3().setFromObject(model);
+if (box.isEmpty()) throw new Error('model has no visible geometry');
+const center = box.getCenter(new THREE.Vector3());
+const size = box.getSize(new THREE.Vector3());
+const radius = size.length() / 2;
+
+const bgMat = new THREE.MeshStandardMaterial({ color: BG, roughness: 0.95 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(radius * 60, radius * 60), bgMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = box.min.y;
+floor.receiveShadow = true;
+scene.add(floor);
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(radius * 60, radius * 60), bgMat);
+wall.receiveShadow = true;
+scene.add(wall);
+
+const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
+key.castShadow = true;
+key.shadow.mapSize.set(Q.shadowMap, Q.shadowMap);
+key.shadow.radius = 10;
+key.shadow.blurSamples = Q.shadowBlur;
+key.shadow.bias = -0.0004;
+const sc = key.shadow.camera;
+sc.left = -radius * 2.5; sc.right = radius * 2.5; sc.top = radius * 2.5; sc.bottom = -radius * 2.5;
+sc.near = 1; sc.far = radius * 12;
+scene.add(key, key.target);
+const rim = new THREE.DirectionalLight(0xdfe8ff, 0.9);
+scene.add(rim, rim.target);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b0a5, 0.5));
+
+const FOV = 24;
+const cam = new THREE.PerspectiveCamera(FOV, W / H, 1, radius * 100);
+const deg = THREE.MathUtils.degToRad;
+
+for (const view of views) {
+  const yaw = deg(view.yaw), pitch = deg(view.pitch);
+  const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+  const flat = new THREE.Vector3(dir.x, 0, dir.z).normalize();
+
+  // Start from a distance that fits the bounding sphere, then move in until the projected
+  // bounding box fills FILL of the frame in its tighter direction.
+  const vHalf = deg(FOV / 2);
+  const hHalf = Math.atan(Math.tan(vHalf) * (W / H));
+  let dist = radius / Math.sin(Math.min(vHalf, hHalf));
+  const FILL = 0.8;
+  const corners = [];
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  for (let i = 0; i < 6; i++) {
+    cam.position.copy(center).addScaledVector(dir, dist);
+    cam.lookAt(center);
+    cam.far = dist + radius * 50;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    let extent = 0;
+    for (const c of corners) {
+      const p = c.clone().project(cam);
+      extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+    }
+    // Projected size scales with 1/(distance to the model's near side); correct along that span.
+    const near = Math.max(dist - radius, radius * 0.1);
+    dist = radius + near * (extent / FILL);
+  }
+  cam.position.copy(center).addScaledVector(dir, dist);
+  cam.lookAt(center);
+  cam.updateProjectionMatrix();
+  scene.fog = new THREE.Fog(BG, dist * 1.6, dist * 4);
+
+  // Backdrop wall faces the camera, behind the model.
+  wall.position.copy(center).addScaledVector(flat, -radius * 1.6);
+  wall.position.y = box.min.y;
+  wall.lookAt(wall.position.clone().add(flat));
+
+  // Key light from the camera's upper left, rim light from behind right.
+  const left = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), flat).normalize();
+  key.target.position.copy(center);
+  key.position.copy(center).addScaledVector(flat, radius * 3).addScaledVector(left, radius * 2).add(new THREE.Vector3(0, radius * 4, 0));
+  rim.target.position.copy(center);
+  rim.position.copy(center).addScaledVector(flat, -radius * 3).addScaledVector(left, -radius * 3).add(new THREE.Vector3(0, radius * 3, 0));
+
+  const composer = new EffectComposer(renderer);
+  composer.setSize(W, H);
+  composer.addPass(new RenderPass(scene, cam));
+  const ao = new GTAOPass(scene, cam, W, H);
+  ao.updateGtaoMaterial({ radius: 18, distanceExponent: 1.5, thickness: 4, scale: 1.2, samples: Q.aoSamples });
+  ao.blendIntensity = 0.9;
+  composer.addPass(ao);
+  composer.addPass(new OutputPass());
+  for (let i = 0; i < Q.passes; i++) composer.render();
+  composer.dispose();
+
+  const blob = await new Promise((resolve) => renderer.domElement.toBlob(resolve, 'image/png'));
+  await post('/result/' + encodeURIComponent(view.name) + '.png', blob);
+}
+await post('/done', '');
+</script>
+</body>
+</html>
