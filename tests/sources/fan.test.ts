@@ -63,6 +63,14 @@ test('fetchFanSource downloads a github archive and filters files by paths', asy
     assert.equal(again.root, r.root);
     assert.equal(server.hits.get(`/o/r/zip/${sha}`), 1);
     assert.equal(server.hits.get('/repos/o/r/commits/HEAD'), 1);
+    // An explicit refresh: false still reuses it; refresh: true asks for the commit and archive again.
+    await fetchFanSource(cache, src(), { ...opts, refresh: false });
+    assert.equal(server.hits.get(`/o/r/zip/${sha}`), 1);
+    assert.equal(server.hits.get('/repos/o/r/commits/HEAD'), 1);
+    const refreshed = await fetchFanSource(cache, src(), { ...opts, refresh: true });
+    assert.deepEqual(refreshed.files, r.files);
+    assert.equal(server.hits.get(`/o/r/zip/${sha}`), 2);
+    assert.equal(server.hits.get('/repos/o/r/commits/HEAD'), 2);
   } finally {
     await server.close();
     await rm(cache, { recursive: true, force: true });

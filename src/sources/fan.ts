@@ -15,6 +15,8 @@ export interface FanFetchOptions {
   githubApi?: string;
   codeload?: string;
   idleTimeoutMs?: number;
+  /** Re-download even when the cached download is younger than 24 hours. */
+  refresh?: boolean;
 }
 
 const DEFAULT_GITHUB_API = 'https://api.github.com';
@@ -52,7 +54,8 @@ const sha1Short = (text: string): string => createHash('sha1').update(text).dige
 
 /**
  * Downloads a fan source into `cacheDir` and returns the extracted root plus the model files
- * matching its `paths`, relative to the root and sorted. Reuses a download younger than 24 hours.
+ * matching its `paths`, relative to the root and sorted. Reuses a download younger than 24 hours
+ * unless `opts.refresh` is set.
  */
 export async function fetchFanSource(
   cacheDir: string, src: FanSource, opts: FanFetchOptions = {},
@@ -64,7 +67,7 @@ export async function fetchFanSource(
   const wanted = (path: string): boolean => matchers.some((re) => re.test(path));
   // The key suffix versions the keep predicate so that changed paths never reuse an older extraction.
   const keySuffix = `-${sha1Short(JSON.stringify(src.fetch.paths))}`;
-  const freshOpts = { refresh: false, maxAgeHours: MAX_AGE_HOURS };
+  const freshOpts = { refresh: opts.refresh === true, maxAgeHours: MAX_AGE_HOURS };
 
   let root: string;
   let commit: string | null = null;

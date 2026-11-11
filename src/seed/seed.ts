@@ -565,7 +565,7 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         const firstFan = nextProjectId;
         const lastFanSubmodel = lastSubmodelId;
         try {
-          const { root, commit, files } = await fetchFanSource(input.cacheDir, src, opts.fanFetch);
+          const { root, commit, files } = await fetchFanSource(input.cacheDir, src, { ...opts.fanFetch, refresh: opts.refresh });
           const built = buildFanProjects(src, root, files, maps, nextSubmodelId);
           const fanKeys = new Set<string>();
           for (const p of built.projects) {
