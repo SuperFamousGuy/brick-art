@@ -14,19 +14,24 @@ For each prompt, brick-art produces:
 - **Parts list**: every brick in the model, with type, size, color, and
   quantity.
 - **Instruction manual**: numbered, step-by-step build instructions.
-- **Preview image**: an SVG of the finished model.
+- **Rendered images**: studio-lit pictures of the finished model, front and
+  three-quarter, made from the official 3D shape of every part.
+- **Model file**: an LDraw `.ldr` file that opens in LDraw tools such as
+  LeoCAD, LDView, and BrickLink Studio.
 
 ## Example
 
 > Build a small red lighthouse on a rocky gray base.
 
-Claude responds with the parts list, the build steps, and an SVG of the
-completed lighthouse.
+Claude responds with the parts list, the build steps, and rendered images of
+the completed lighthouse.
 
 ## Install
 
 brick-art is a [Claude Code](https://claude.com/claude-code) plugin. It
-requires Node.js 22.18 or later.
+requires Node.js 22.18 or later. Rendering also needs a Chromium-based browser:
+Google Chrome, Microsoft Edge, Chromium, or Brave. To use a browser in another
+location, set `BRICK_ART_BROWSER` to its executable.
 
 Add the marketplace:
 
@@ -55,12 +60,16 @@ default is off. When you turn it on, the database also includes community
 designs from brick-art's curated list, with positions and build steps. It
 adds about 8 MB to the download.
 
+The first render downloads the LDraw parts library, about 145 MB, into the
+plugin data folder. A local database build already includes it.
+
 The database lives in the plugin data folder. Claude Code removes it when you
 uninstall the plugin.
 
-## Lookup tools
+## Tools
 
-Claude uses these tools to choose real parts and to find existing designs:
+Claude uses these tools to choose real parts, find existing designs, and
+render the result:
 
 | Tool | Purpose |
 | --- | --- |
@@ -74,6 +83,7 @@ Claude uses these tools to choose real parts and to find existing designs:
 | `get_project` | Get one project's parts with colors and quantities, and its sub-assemblies. |
 | `get_submodel` | Get the placed parts of one sub-assembly step by step, with colors, positions, and rotations. |
 | `database_status` | Check whether the database is ready, when it was built, and its source versions. |
+| `render_model` | Render an LDraw model file to PNG images, and tally the parts and colors it places. |
 
 Default part lookups skip incomplete parts, printed variants, and placeholder
 colors. Project results carry the author, license, and URL of each model, so
@@ -166,9 +176,9 @@ includes a `CREDITS.md` file that lists every source and every OMR author.
 
 ## Status
 
-Early development. The parts and project databases and the lookup tools
-work, and CI publishes the database. The model format and the rendering
-pipeline are not built yet.
+Early development. The parts and project databases, the lookup tools, and
+rendering work, and CI publishes the database. Models are LDraw files. Rendered
+images for each instruction step are not built yet.
 
 ## Disclaimer
 

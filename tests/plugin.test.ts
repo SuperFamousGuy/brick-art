@@ -64,3 +64,12 @@ test('reseed command passes the plugin data folder to the update and the local s
   ));
   assert.ok(text.includes('run_in_background'));
 });
+
+test('build-model skill names itself and points at render_model', () => {
+  const text = readFileSync(join(root, 'skills', 'build-model', 'SKILL.md'), 'utf8');
+  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  assert.ok(frontmatter, 'frontmatter present');
+  assert.match(frontmatter[1], /^name: build-model$/m);
+  assert.match(frontmatter[1], /^description:\s*\S/m);
+  assert.ok(text.includes('render_model'));
+});

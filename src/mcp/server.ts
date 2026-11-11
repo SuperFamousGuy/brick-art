@@ -17,6 +17,9 @@ import { getSubmodel } from '../lookup/get-submodel.ts';
 import { readUpdateState } from '../release/download.ts';
 import { findSubstitutes } from '../lookup/find-substitutes.ts';
 import { TRAITS } from '../derive/traits.ts';
+import { findBrowser } from '../render/browser.ts';
+import { openLDrawLibrary } from '../render/library.ts';
+import { renderModel, type RenderView } from '../render/render.ts';
 import type { ConnectionType } from '../types.ts';
 
 const CONNECTION_TYPES = [
@@ -239,6 +242,39 @@ export function createServer(dataDir: string): McpServer {
         if (db === null) return notReady();
         const result = getSubmodel(db, args);
         return result === null ? fail(`No sub-assembly with id ${args.submodelId}.`) : ok(result);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'render_model',
+    {
+      description: 'Renders an LDraw model file (.ldr or .mpd) to studio-lit PNG images of the built model, one per view, using the official 3D shape of every part. Needs an installed Chrome, Edge, Chromium, or Brave; the first render downloads the LDraw parts library (about 145 MB) if it is not cached. Returns the PNG paths.',
+      inputSchema: {
+        modelPath: z.string().describe('Absolute path to the .ldr or .mpd model file. Submodel files it references are read from the same folder.'),
+        outDir: z.string().optional().describe("Folder for the PNGs (default: the model's folder). Files are named <model>-<view>.png."),
+        views: z.array(z.object({
+          name: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).describe('View name used in the file name, such as "front".'),
+          yaw: z.number().describe("Degrees the camera turns around the model; 0 faces the model's front (its LDraw -z side), and positive values swing the camera toward +x."),
+          pitch: z.number().min(-10).max(89).describe('Degrees the camera is raised above the horizon.'),
+        })).min(1).max(8).optional()
+          .describe('Views to render (default: front at yaw 0, pitch 10; and angle at yaw 35, pitch 22).'),
+        width: int.min(200).max(4000).optional().describe('Image width in pixels (default 1200).'),
+        height: int.min(200).max(4000).optional().describe('Image height in pixels (default 1600).'),
+      },
+    },
+    async (args: {
+      modelPath: string; outDir?: string; views?: RenderView[]; width?: number; height?: number;
+    }): Promise<ToolResult> => {
+      try {
+        const browser = findBrowser();
+        if (browser === null) {
+          return fail('No Chromium-based browser found (Chrome, Edge, Chromium, or Brave). Install one, or set BRICK_ART_BROWSER to its executable.');
+        }
+        const library = await openLDrawLibrary(dataDir);
+        return ok(await renderModel({ ...args, browser, library }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }
