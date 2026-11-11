@@ -19,6 +19,8 @@ concurrency:
 
 jobs:
   release:
+    # A manual run from another branch must not publish.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -27,17 +29,29 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - uses: actions/cache@v4
+      - run: npm test
+      # Restore and save separately so a failed build still caches what it downloaded. The extracted
+      # trees are rebuilt from the cached archives, so they are not cached.
+      - uses: actions/cache/restore@v4
         with:
-          path: .data/cache
+          path: |
+            .data/cache
+            !.data/cache/extract
           key: sources-${{ github.run_id }}
           restore-keys: sources-
       - name: Build release assets
         id: build
         run: |
           set -o pipefail
-          node --max-old-space-size=3072 src/entry/release.mjs --out out | tee build.log
+          node --max-old-space-size=3072 src/entry/release.mjs --out .data/out | tee build.log
           echo "tag=$(tail -n 1 build.log)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            .data/cache
+            !.data/cache/extract
+          key: sources-${{ github.run_id }}
       - name: Validate tag
         env:
           TAG: ${{ steps.build.outputs.tag }}
@@ -54,7 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.build.outputs.tag }}
-        run: gh release create "$TAG" out/* --prerelease --latest=false --title "Data $TAG" --notes-file out/CREDITS.md
+        run: gh release create "$TAG" .data/out/* --prerelease --latest=false --title "Data $TAG" --notes-file .data/out/CREDITS.md
       - name: Prune old releases
         env:
           GH_TOKEN: ${{ github.token }}
