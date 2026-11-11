@@ -57,8 +57,29 @@ test('buildPartMap prefers the part that owns the geometry', () => {
     { partNum: '3001pr1', ldrawFile: '3001.DAT', geometryFrom: '3001' },
     { partNum: '3001a', ldrawFile: '3001.dat', geometryFrom: '3001' },
     { partNum: 'x', ldrawFile: null, geometryFrom: null },
-  ]);
+  ]).parts;
   assert.equal(m.get('3009.dat'), '3009');
   assert.equal(m.get('3001.dat'), '3001a');
   assert.equal(m.size, 2);
+});
+
+test('buildPartMap maps an unmatched variant file to its base part; exact matches win', () => {
+  const { parts, suffixed } = buildPartMap([
+    { partNum: '3023', ldrawFile: '3023.dat', geometryFrom: '3023' },
+    { partNum: '3001', ldrawFile: '3001.dat', geometryFrom: '3001' },
+    { partNum: '3626', ldrawFile: '3626.dat', geometryFrom: '3626' },
+    { partNum: '3626c', ldrawFile: '3626c.dat', geometryFrom: '3626c' },
+    { partNum: '3709', ldrawFile: null, geometryFrom: null },
+    { partNum: '4092a', ldrawFile: null, geometryFrom: null },
+    { partNum: '4092', ldrawFile: '4092.dat', geometryFrom: '4092' },
+  ], ['3023b.dat', '3001.dat', '3626c.dat', '3709B.DAT', '4092a.dat', '9999x.dat', '3023bb.dat', '3023.dat']);
+  assert.equal(parts.get('3023b.dat'), '3023');
+  assert.equal(parts.get('3001.dat'), '3001');
+  assert.equal(parts.get('3626c.dat'), '3626c');
+  assert.equal(parts.get('3709b.dat'), '3709');
+  // 4092a is a Rebrickable part of its own (unmatched to a file), so the file is not mapped to 4092.
+  assert.equal(parts.has('4092a.dat'), false);
+  assert.equal(parts.has('9999x.dat'), false);
+  assert.equal(parts.has('3023bb.dat'), false);
+  assert.deepEqual([...suffixed].sort(), ['3023b.dat', '3709b.dat']);
 });

@@ -161,6 +161,8 @@ function ldrawFixtures(): Map<string, string> {
   f.set('p/4-4cyli.dat', ldFile('Cylinder 1.0', '4-4cyli.dat', 'Primitive', box(-10, 0, -10, 10, 1, 10)));
   part('77', '~Technic Flex-System Hose Segment', box(-2, 0, -2, 2, 2, 2));
   f.set('parts/166.dat', ldFile('~Moved to 3001', '166.dat', 'Part Alias', ['1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat']));
+  // A variant file with no Rebrickable part of its own: it maps to Rebrickable 3023 by suffix.
+  part('3023b', 'Plate  1 x  2 without Bottom Tube', box(-20, 0, -10, 20, 8, 10));
   const colour = (name: string, code: number, rgb: string) =>
     `0 !COLOUR ${name.padEnd(40)} CODE ${String(code).padStart(3)}   VALUE #${rgb}   EDGE #333333`;
   f.set('LDConfig.ldr', [

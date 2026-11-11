@@ -8,13 +8,25 @@ export interface AssembledProject {
   submodels: Omit<SubmodelRow, 'projectId'>[];
   placements: PlacementRow[];
   parts: Omit<ProjectPartRow, 'projectId'>[];
-  /**
-   * `resolved` placements have a known part (or child) and color; `primitives` and `segments` are
-   * library files that are not parts; `aliases` resolved through a `~Moved to` or `=` alias.
-   */
-  stats: { placements: number; resolved: number; primitives: number; segments: number; aliases: number };
+  stats: AssemblyStats;
   licenses: (string | null)[];
   authors: string[];
+}
+
+/**
+ * Placement counts. `partRefs` are references to parts, resolved or not (`part` plus `unmatched`
+ * placements); sub-assembly references, `primitives`, and `segments` are not part references.
+ * `partResolved` part references have a known part and color. `aliases` resolved through a
+ * `~Moved to` or `=` alias, `suffixMatched` through a variant-suffix entry of the part map.
+ */
+export interface AssemblyStats {
+  placements: number;
+  partRefs: number;
+  partResolved: number;
+  primitives: number;
+  segments: number;
+  aliases: number;
+  suffixMatched: number;
 }
 
 const INHERIT = 16;
@@ -39,7 +51,11 @@ function followAlias(ref: string, parts: Map<string, string>, classify: RefClass
 export function assembleProject(
   root: string,
   files: Map<string, ModelFile>,
-  maps: { parts: Map<string, string>; colors: Map<number, number>; classify?: RefClassifier },
+  maps: {
+    parts: Map<string, string>; colors: Map<number, number>; classify?: RefClassifier;
+    /** Part map keys that came from variant-suffix matching, counted in `suffixMatched`. */
+    suffixed?: Set<string>;
+  },
   nextSubmodelId: () => number,
 ): AssembledProject {
   const submodels: Omit<SubmodelRow, 'projectId'>[] = [];
@@ -48,10 +64,9 @@ export function assembleProject(
   const stack = new Set<string>();
   const licenses: (string | null)[] = [];
   const authors = new Set<string>();
-  let resolved = 0;
-  let primitives = 0;
-  let segments = 0;
-  let aliases = 0;
+  const stats: AssemblyStats = {
+    placements: 0, partRefs: 0, partResolved: 0, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0,
+  };
 
   const visit = (name: string, isMain: boolean): number => {
     const file = files.get(name)!;
@@ -76,21 +91,26 @@ export function assembleProject(
         refKind = 'submodel';
       } else if (!files.has(ref)) {
         partNum = maps.parts.get(ref) ?? null;
+        if (partNum !== null && maps.suffixed?.has(ref)) stats.suffixMatched++;
         const kind = partNum === null && maps.classify ? maps.classify(ref).kind : null;
         if (kind === 'alias') {
           partNum = followAlias(ref, maps.parts, maps.classify!);
-          if (partNum !== null) aliases++;
+          if (partNum !== null) stats.aliases++;
         } else if (kind === 'primitive') {
           refKind = 'primitive';
-          primitives++;
+          stats.primitives++;
         } else if (kind === 'segment') {
           refKind = 'segment';
-          segments++;
+          stats.segments++;
         }
         if (partNum !== null) refKind = 'part';
+        // Only part references count toward the match rate; a reference cut from a cycle is a sub-assembly.
+        if (refKind === 'part' || refKind === 'unmatched') {
+          stats.partRefs++;
+          if (refKind === 'part' && colorOk) stats.partResolved++;
+        }
       }
       if (childSubmodelId === null) sub.partCount++;
-      if (colorOk && (partNum !== null || childSubmodelId !== null)) resolved++;
       placements.push({
         submodelId: id, step: line.step, seq: line.seq, partNum, ldrawFile, ldrawColor: line.color,
         colorId, childSubmodelId, refKind, pos: line.pos, matrix: line.matrix,
@@ -135,7 +155,7 @@ export function assembleProject(
     }
   }
   return {
-    submodels, placements, parts, stats: { placements: placements.length, resolved, primitives, segments, aliases },
+    submodels, placements, parts, stats: { ...stats, placements: placements.length },
     licenses, authors: [...authors],
   };
 }

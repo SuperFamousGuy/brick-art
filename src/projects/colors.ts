@@ -41,13 +41,23 @@ export function buildColorMap(
   return { map, rate: codes.size === 0 ? 0 : map.size / codes.size };
 }
 
-/** Maps a normalized LDraw file to a part number, preferring the part that owns the geometry. */
+const VARIANT_FILE = /^(.+)[a-z]\.dat$/;
+
+/**
+ * Maps a normalized LDraw file to a part number, preferring the part that owns the geometry.
+ * `parts` lists every Rebrickable part, with its matched LDraw file or null. A library file in
+ * `ldrawFiles` named `<base><letter>.dat` that no part maps to, and whose stem is not a Rebrickable
+ * part, maps to the Rebrickable part `<base>` when that exists; such keys are listed in `suffixed`.
+ */
 export function buildPartMap(
   parts: { partNum: string; ldrawFile: string | null; geometryFrom: string | null }[],
-): Map<string, string> {
+  ldrawFiles: Iterable<string> = [],
+): { parts: Map<string, string>; suffixed: Set<string> } {
   const out = new Map<string, string>();
   const owns = new Map<string, boolean>();
+  const byLower = new Map<string, string>();
   for (const p of parts) {
+    byLower.set(p.partNum.toLowerCase(), p.partNum);
     if (!p.ldrawFile) continue;
     const file = normalizeRef(p.ldrawFile);
     const owner = p.geometryFrom === p.partNum;
@@ -57,5 +67,15 @@ export function buildPartMap(
       owns.set(file, owner);
     }
   }
-  return out;
+  const suffixed = new Set<string>();
+  for (const raw of ldrawFiles) {
+    const file = normalizeRef(raw);
+    const m = VARIANT_FILE.exec(file);
+    if (!m || out.has(file) || byLower.has(file.slice(0, -'.dat'.length))) continue;
+    const base = byLower.get(m[1]!);
+    if (base === undefined) continue;
+    out.set(file, base);
+    suffixed.add(file);
+  }
+  return { parts: out, suffixed };
 }

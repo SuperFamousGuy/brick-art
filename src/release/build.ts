@@ -12,7 +12,10 @@ import { runSeed } from '../seed/seed.ts';
 import type { SeedOptions } from '../seed/seed.ts';
 
 const MIN_PART_MATCH = 0.95;
-/** Share of OMR part references (primitives and segments excluded) resolving to a known part and color. */
+/**
+ * Share of OMR part references resolving to a known part and color: resolved over part plus unmatched
+ * placements. Sub-assembly references, primitives, and flexible segments are excluded.
+ */
 const MIN_PLACEMENT_MATCH = 0.95;
 const COUNT_TABLES = ['parts', 'projects', 'project_parts', 'submodels', 'placements'] as const;
 

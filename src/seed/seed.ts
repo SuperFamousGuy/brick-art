@@ -21,7 +21,7 @@ import { dataPaths } from '../paths.ts';
 import { assembleProject } from '../projects/assemble.ts';
 import { refClassifier } from '../projects/classify.ts';
 import type { RefClassifier } from '../projects/classify.ts';
-import type { AssembledProject } from '../projects/assemble.ts';
+import type { AssembledProject, AssemblyStats } from '../projects/assemble.ts';
 import { buildColorMap, buildPartMap } from '../projects/colors.ts';
 import { licenseAllowed } from '../projects/license.ts';
 import { parseModel } from '../projects/mpd.ts';
@@ -350,7 +350,7 @@ interface StageInput {
   partMapInput: { partNum: string; ldrawFile: string | null; geometryFrom: string | null }[];
 }
 
-type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify: RefClassifier };
+type Maps = { parts: Map<string, string>; colors: Map<number, number>; classify: RefClassifier; suffixed: Set<string> };
 type SetUpdate = { id: number; author: string | null; license: string | null; url: string };
 
 const mediaId = (f: OmrFile): number => Number(/\/omr_models\/(\d+)\//.exec(f.url)?.[1] ?? 0);
@@ -426,10 +426,10 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   const failedSources: string[] = [];
   let colorRate: number | '' = '';
   let placementRate: number | '' = '';
-  let omrPrimitives = 0;
-  let omrSegments = 0;
-  let omrAliases = 0;
+  let omrStats: AssemblyStats | null = null;
   let skippedLicense = 0;
+  let fanSkippedLicense = 0;
+  const fanCommits: Record<string, string> = {};
   let omrFilesFailed = 0;
   let omrDuplicates = 0;
   let keyClashes = 0;
@@ -441,7 +441,8 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
       const colors = buildColorMap(readFileSync(join(sources.ldrawRoot, 'LDConfig.ldr'), 'utf8'), rb.colors);
       if (colors.map.size === 0) throw new Error('LDConfig.ldr maps no colors');
       colorRate = colors.rate;
-      maps = { parts: buildPartMap(input.partMapInput), colors: colors.map, classify: refClassifier(input.lib) };
+      const partMap = buildPartMap(input.partMapInput, input.lib.partFiles());
+      maps = { parts: partMap.parts, suffixed: partMap.suffixed, colors: colors.map, classify: refClassifier(input.lib) };
     } catch (err) {
       failedSources.push('omr');
       if (variant === 'full') failedSources.push(...input.fanSources.map((src) => src.id));
@@ -467,11 +468,9 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
       const omrKeys = new Set<string>();
       const updates: SetUpdate[] = [];
       const attached = new Set<number>();
-      let placements = 0;
-      let resolved = 0;
-      let primitives = 0;
-      let segments = 0;
-      let aliases = 0;
+      const stats: AssemblyStats = {
+        placements: 0, partRefs: 0, partResolved: 0, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0,
+      };
       for (const f of files) {
         let a: AssembledProject;
         let author: string | null;
@@ -501,11 +500,7 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
           log(`omr key clash: ${f.fileName} already written; skipped ${f.url}`);
           continue;
         }
-        placements += a.stats.placements;
-        resolved += a.stats.resolved;
-        primitives += a.stats.primitives;
-        segments += a.stats.segments;
-        aliases += a.stats.aliases;
+        for (const k of Object.keys(stats) as (keyof AssemblyStats)[]) stats[k] += a.stats[k];
         if (attach) {
           // A set's main model gives the set positions; the set keeps its Rebrickable parts list.
           attached.add(set.id);
@@ -535,15 +530,13 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         db.exec('ROLLBACK');
         throw err;
       }
-      // Primitives and segments are not parts, so they do not count toward the rate.
-      const partRefs = placements - primitives - segments;
-      placementRate = partRefs === 0 ? '' : resolved / partRefs;
-      omrPrimitives = primitives;
-      omrSegments = segments;
-      omrAliases = aliases;
+      // Part references only: sub-assembly references, primitives, and segments are not parts.
+      placementRate = stats.partRefs === 0 ? '' : stats.partResolved / stats.partRefs;
+      omrStats = stats;
       log(`omr: ${attached.size} sets with positions, ${nextProjectId - firstProject} omr projects, ` +
-        `${skippedLicense} skipped for license, ${omrFilesFailed} failed, ${resolved}/${partRefs} placements resolved ` +
-        `(${primitives} primitives, ${segments} segments excluded; ${aliases} via aliases)`);
+        `${skippedLicense} skipped for license, ${omrFilesFailed} failed, ` +
+        `${stats.partResolved}/${stats.partRefs} part references resolved (${stats.primitives} primitives, ` +
+        `${stats.segments} segments excluded; ${stats.aliases} via aliases, ${stats.suffixMatched} via suffix)`);
     } catch (err) {
       discard(firstProject, lastSubmodel);
       failedSources.push('omr');
@@ -555,7 +548,7 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         const firstFan = nextProjectId;
         const lastFanSubmodel = lastSubmodelId;
         try {
-          const { root, files } = await fetchFanSource(input.cacheDir, src, opts.fanFetch);
+          const { root, commit, files } = await fetchFanSource(input.cacheDir, src, opts.fanFetch);
           const built = buildFanProjects(src, root, files, maps, nextSubmodelId);
           const fanKeys = new Set<string>();
           for (const p of built.projects) {
@@ -574,6 +567,8 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
             });
           }
           flush();
+          fanSkippedLicense += built.skipped;
+          if (commit !== null) fanCommits[`fan_commit_${src.id}`] = commit;
           log(`fan ${src.id}: ${built.projects.length} projects, ${built.skipped} skipped for license`);
         } catch (err) {
           discard(firstFan, lastFanSubmodel);
@@ -594,12 +589,17 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
     count_projects_with_positions: count('SELECT count(*) AS n FROM projects WHERE has_positions = 1'),
     count_projects_fan: count("SELECT count(*) AS n FROM projects WHERE kind = 'fan'"),
     count_models_skipped_license: skippedLicense,
+    count_fan_skipped_license: fanSkippedLicense,
     count_omr_files_failed: omrFilesFailed,
     count_omr_duplicates: omrDuplicates,
     count_project_key_clashes: keyClashes,
-    count_placements_primitive: omrPrimitives,
-    count_placements_segment: omrSegments,
-    count_placements_alias_resolved: omrAliases,
+    count_placements_part_refs: omrStats?.partRefs ?? 0,
+    count_placements_part_resolved: omrStats?.partResolved ?? 0,
+    count_placements_primitive: omrStats?.primitives ?? 0,
+    count_placements_segment: omrStats?.segments ?? 0,
+    count_placements_alias_resolved: omrStats?.aliases ?? 0,
+    count_placements_suffix_matched: omrStats?.suffixMatched ?? 0,
     failed_sources: failedSources.join(','),
+    ...fanCommits,
   };
 }

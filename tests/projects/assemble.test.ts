@@ -34,7 +34,8 @@ test('assembleProject builds submodels, placements, and parts', () => {
     { partNum: '3001', colorId: 4, quantity: 1, isSpare: false, fromMinifig: false },
     { partNum: '3023', colorId: 4, quantity: 1, isSpare: false, fromMinifig: false },
   ]);
-  assert.deepEqual(a.stats, { placements: 5, resolved: 3, primitives: 0, segments: 0, aliases: 0 });
+  // 3001 and 3023 resolve; 9999x.dat and missing.ldr do not; the Cab reference is not a part reference.
+  assert.deepEqual(a.stats, { placements: 5, partRefs: 4, partResolved: 2, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0 });
   assert.deepEqual(a.placements.map((p) => p.refKind), ['part', 'part', 'unmatched', 'unmatched', 'submodel']);
   assert.deepEqual(a.authors, ['Test Builder', 'Cab Builder']);
   assert.equal(a.licenses.length, 2);
@@ -66,7 +67,7 @@ test('assembleProject cuts cycles', () => {
   assert.equal(cut.childSubmodelId, null);
   assert.equal(cut.ldrawFile, 'a.ldr');
   assert.equal(cut.refKind, 'unmatched');
-  assert.deepEqual(a.stats, { placements: 2, resolved: 1, primitives: 0, segments: 0, aliases: 0 });
+  assert.deepEqual(a.stats, { placements: 2, partRefs: 0, partResolved: 0, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0 });
   assert.deepEqual(a.parts, []);
 });
 
@@ -79,7 +80,7 @@ test('assembleProject passes color 16 down through nested submodels', () => {
   const m = parseModel(text, 'm.mpd');
   const a = assembleProject(m.main, m.files, maps, counter());
   assert.deepEqual(a.parts.map((p) => [p.partNum, p.colorId, p.quantity]), [['3001', 4, 1]]);
-  assert.deepEqual(a.stats, { placements: 3, resolved: 3, primitives: 0, segments: 0, aliases: 0 });
+  assert.deepEqual(a.stats, { placements: 3, partRefs: 1, partResolved: 1, primitives: 0, segments: 0, aliases: 0, suffixMatched: 0 });
 });
 
 const line1 = (file: string) => `1 16 0 0 0 1 0 0 0 1 0 0 0 1 ${file}`;
@@ -108,16 +109,34 @@ test('assembleProject classifies primitives, segments, and aliases', () => {
     ['part', '3023', '50746.dat'],
     ['part', '3001', '9.dat'],
   ]);
-  assert.deepEqual(a.stats, { placements: 5, resolved: 3, primitives: 1, segments: 1, aliases: 3 });
+  assert.deepEqual(a.stats, {
+    placements: 5, partRefs: 3, partResolved: 3, primitives: 1, segments: 1, aliases: 3, suffixMatched: 0,
+  });
   assert.deepEqual(a.parts.map((p) => [p.partNum, p.colorId, p.quantity]), [['3001', 4, 2], ['3023', 4, 1]]);
 });
 
 test('assembleProject counts primitives and segments apart from unmatched parts', () => {
-  const m = mpd('3001.dat', '3023.dat', '4-4cyli.dat', '77.dat', '2436a.dat');
+  const m = parseModel([
+    '0 FILE m.ldr', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 s.ldr',
+    '0 FILE s.ldr', ...['3001.dat', '3023.dat', '4-4cyli.dat', '77.dat', '2436a.dat'].map(line1),
+    '1 72 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat',
+  ].join('\n'), 'm.mpd');
   const a = assembleProject(m.main, m.files, classified, counter());
-  assert.deepEqual(a.placements.map((p) => p.refKind), ['part', 'part', 'primitive', 'segment', 'unmatched']);
-  const { placements, resolved, primitives, segments } = a.stats;
-  assert.equal(resolved / (placements - primitives - segments), 2 / 3);
+  assert.deepEqual(a.placements.map((p) => p.refKind),
+    ['part', 'part', 'primitive', 'segment', 'unmatched', 'part', 'submodel']);
+  // Part references: 3001, 3023, 2436a, and 3001 in unmapped color 72; the last two do not resolve.
+  assert.deepEqual(a.stats, {
+    placements: 7, partRefs: 4, partResolved: 2, primitives: 1, segments: 1, aliases: 0, suffixMatched: 0,
+  });
+});
+
+test('assembleProject counts placements resolved through suffix-matched map entries', () => {
+  const m = mpd('2436a.dat', '3001.dat', '2436a.dat');
+  const parts = new Map([...maps.parts, ['2436a.dat', '2436']]);
+  const a = assembleProject(m.main, m.files, { ...classified, parts, suffixed: new Set(['2436a.dat']) }, counter());
+  assert.deepEqual(a.placements.map((p) => [p.refKind, p.partNum]), [['part', '2436'], ['part', '3001'], ['part', '2436']]);
+  assert.equal(a.stats.suffixMatched, 2);
+  assert.equal(a.stats.partResolved, 3);
 });
 
 test('assembleProject stops at an alias cycle and leaves it unmatched', () => {

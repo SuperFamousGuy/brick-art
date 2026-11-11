@@ -120,6 +120,15 @@ export class LDrawLibrary {
     return this.#ldraw.has(`parts/${this.normalize(partFile)}`);
   }
 
+  /** Names of the files directly in `parts/` (not its sub-folders), such as `3001.dat`. */
+  partFiles(): string[] {
+    const out: string[] = [];
+    for (const key of this.#ldraw.keys()) {
+      if (key.startsWith('parts/') && !key.includes('/', 'parts/'.length)) out.push(key.slice('parts/'.length));
+    }
+    return out;
+  }
+
   /** Which library folder holds `ref`: `parts/` first, then `p/`, as `read` looks. Null when neither does. */
   where(ref: string): 'parts' | 'p' | null {
     const n = this.normalize(ref);

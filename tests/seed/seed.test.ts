@@ -13,7 +13,7 @@ import type { Variant } from '../../src/projects/types.ts';
 import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
 import { MPD_10001_MINI, MPD_BMODEL } from '../helpers/models.ts';
 import type { FakeReply } from '../helpers/models.ts';
-import { FAN_SOURCES_YAML, omrPages, seedFixture } from '../helpers/seeded.ts';
+import { FAN_SHA, FAN_SOURCES_YAML, omrPages, seedFixture } from '../helpers/seeded.ts';
 
 type T = { after: (fn: () => Promise<void>) => void };
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -213,8 +213,12 @@ test('variant standard attaches OMR positions to the set and skips unlicensed B-
   assert.equal(s.manifest.count_projects_fan, '0');
   assert.equal(s.manifest.count_projects_with_positions, '1');
   assert.equal(s.manifest.failed_sources, '');
-  // 3001 red, the Cab reference, and 3023 inheriting resolve; 9999x.dat and missing.ldr do not.
-  assert.equal(s.manifest.placement_match_rate, String(3 / 5));
+  // Part references: 3001 red and 3023 inheriting resolve; 9999x.dat and missing.ldr do not.
+  // The Cab sub-assembly reference is not a part reference.
+  assert.equal(s.manifest.placement_match_rate, String(2 / 4));
+  assert.equal(s.manifest.count_placements_part_refs, '4');
+  assert.equal(s.manifest.count_placements_part_resolved, '2');
+  assert.equal(s.manifest.count_placements_suffix_matched, '0');
   assert.equal(s.manifest.color_match_rate, String(4 / 5));
 });
 
@@ -223,7 +227,7 @@ test('OMR placements record their kind and the rate counts part references only'
   const ref = (file: string) => `1 4 0 0 0 1 0 0 0 1 0 0 0 1 ${file}`;
   pages.set('/media/omr_models/1/S1-1.mpd', [
     '0 FILE S1-1.ldr', '0 Author: Test Builder', '0 !LICENSE Licensed under CC BY 4.0 : see CAreadme.txt',
-    ref('3001.dat'), ref('4-4cyli.dat'), ref('77.dat'), ref('166.dat'), ref('9999x.dat'), '',
+    ref('3001.dat'), ref('4-4cyli.dat'), ref('77.dat'), ref('166.dat'), ref('9999x.dat'), ref('3023b.dat'), '',
   ].join('\n'));
   const s = await seeded(t, 'standard', pages);
   const rows = s.db.prepare('SELECT ref_kind, part_num, ldraw_file FROM placements ORDER BY seq').all();
@@ -233,8 +237,12 @@ test('OMR placements record their kind and the rate counts part references only'
     { ref_kind: 'segment', part_num: null, ldraw_file: '77.dat' },
     { ref_kind: 'part', part_num: '3001', ldraw_file: '166.dat' },
     { ref_kind: 'unmatched', part_num: null, ldraw_file: '9999x.dat' },
+    { ref_kind: 'part', part_num: '3023', ldraw_file: '3023b.dat' },
   ]);
-  assert.equal(s.manifest.placement_match_rate, String(2 / 3));
+  assert.equal(s.manifest.placement_match_rate, String(3 / 4));
+  assert.equal(s.manifest.count_placements_part_refs, '4');
+  assert.equal(s.manifest.count_placements_part_resolved, '3');
+  assert.equal(s.manifest.count_placements_suffix_matched, '1');
   assert.equal(s.manifest.count_placements_primitive, '1');
   assert.equal(s.manifest.count_placements_segment, '1');
   assert.equal(s.manifest.count_placements_alias_resolved, '1');
@@ -281,7 +289,9 @@ test('variant full adds credited fan projects', async (t) => {
     [{ part_num: '3001', color_id: 4, quantity: 1 }, { part_num: '3023', color_id: 4, quantity: 1 }],
   );
   // The fan model does not count toward the OMR placement rate.
-  assert.equal(s.manifest.placement_match_rate, String(3 / 5));
+  assert.equal(s.manifest.placement_match_rate, String(2 / 4));
+  assert.equal(s.manifest.count_fan_skipped_license, '0');
+  assert.equal(s.manifest.fan_commit_fixture_fan, FAN_SHA);
 });
 
 test('an OMR outage is isolated: the seed completes with intact parts', async (t) => {
