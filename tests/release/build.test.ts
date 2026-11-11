@@ -22,7 +22,7 @@ async function run(t: { after: (fn: () => Promise<void>) => void }, mpd: string)
   t.after(close);
   const { dataDir, repoRoot, ...seed } = opts;
   const outDir = join(dir, 'out');
-  const result = await buildRelease({ dataDir, repoRoot, outDir, now: NOW, seed, minPartMatch: 0 });
+  const result = await buildRelease({ dataDir, repoRoot, outDir, now: NOW, seed, minPartMatch: 0, source: { runId: '42', sha: 'abc123' } });
   return { dir, outDir, result };
 }
 
@@ -39,6 +39,7 @@ test('buildRelease writes both databases, release.json and CREDITS.md', async (t
   assert.equal(meta.tag, 'data-3-20261117');
   assert.equal(meta.schemaVersion, 3);
   assert.equal(meta.builtAt, '2026-11-17T08:00:00.000Z');
+  assert.deepEqual(meta.source, { runId: '42', sha: 'abc123' });
   const counts: Record<string, DatabaseSync> = {};
   for (const name of ['standard', 'full'] as const) {
     const gz = await readFile(join(outDir, `${name}.db.gz`));

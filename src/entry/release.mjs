@@ -20,6 +20,10 @@ try {
     dataDir: resolveDataDir(process.env, repoRoot),
     repoRoot,
     outDir: resolve(out),
+    // Set by GitHub Actions; a local build records no source.
+    source: process.env.GITHUB_RUN_ID && process.env.GITHUB_SHA
+      ? { runId: process.env.GITHUB_RUN_ID, sha: process.env.GITHUB_SHA }
+      : null,
   });
   if (result.gateFailures.length > 0) {
     for (const failure of result.gateFailures) console.error(`gate failed: ${failure}`);
