@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { clampLimit, escapeLike } from './common.ts';
+import { bounds, clampLimit, escapeLike } from './common.ts';
 import type { Range } from './common.ts';
 
 export interface ProjectSummary {
@@ -34,8 +34,6 @@ export const FALLBACK_NOTE = 'Build positions are not downloaded yet; they arriv
 export const NO_OMR_NOTE = 'This project has no positions in the LDraw model repository.';
 
 export type Row = Record<string, any>;
-
-const bounds = (r: Range): [number, number] => (typeof r === 'number' ? [r, r] : r);
 
 export function isFallback(db: DatabaseSync): boolean {
   const row = db.prepare("SELECT value FROM manifest WHERE key = 'variant'").get() as { value: string } | undefined;

@@ -81,18 +81,20 @@ export function createServer(dataDir: string): McpServer {
   const server = new McpServer({ name: 'brick-art-parts', version });
   server.server.onclose = () => current.close();
 
+  const notReady = (): ToolResult => {
+    const state = readState(statePath);
+    return fail(
+      `Parts database is not ready (${state.status}). ${state.lastError ?? 'Seeding runs in the background; try again in a few minutes.'}`,
+    );
+  };
+
   /** Wraps a lookup: not-ready and thrown errors become isError results. */
   const withDb =
     <A>(run: (db: NonNullable<ReturnType<CurrentDb['get']>>, args: A) => unknown) =>
     (args: A): ToolResult => {
       try {
         const db = current.get();
-        if (db === null) {
-          const state = readState(statePath);
-          return fail(
-            `Parts database is not ready (${state.status}). ${state.lastError ?? 'Seeding runs in the background; try again in a few minutes.'}`,
-          );
-        }
+        if (db === null) return notReady();
         return ok(run(db, args));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
@@ -205,8 +207,14 @@ export function createServer(dataDir: string): McpServer {
       inputSchema: { id: int.describe('Project id from search_projects.') },
     },
     (args: { id: number }): ToolResult => {
-      const r = withDb((db, a: { id: number }) => getProject(db, a.id))(args);
-      return !r.isError && r.content[0]!.text === 'null' ? fail(`No project with id ${args.id}.`) : r;
+      try {
+        const db = current.get();
+        if (db === null) return notReady();
+        const project = getProject(db, args.id);
+        return project === null ? fail(`No project with id ${args.id}.`) : ok(project);
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
     },
   );
 

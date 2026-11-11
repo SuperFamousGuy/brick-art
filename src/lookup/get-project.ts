@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { FALLBACK_NOTE, NO_OMR_NOTE, isFallback, submodelNames, toSummary } from './search-projects.ts';
+import { FALLBACK_NOTE, NO_OMR_NOTE, isFallback, toSummary } from './search-projects.ts';
 import type { ProjectSummary, Row } from './search-projects.ts';
 
 export interface ProjectDetail extends Omit<ProjectSummary, 'submodels'> {
@@ -16,7 +16,7 @@ export interface ProjectDetail extends Omit<ProjectSummary, 'submodels'> {
 export function getProject(db: DatabaseSync, id: number): ProjectDetail | null {
   const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row | undefined;
   if (!p) return null;
-  const { submodels: _names, ...summary } = toSummary(p, submodelNames(db, id));
+  const { submodels: _unused, ...summary } = toSummary(p, []);
   const parts = db
     .prepare(
       `SELECT pp.part_num, pt.name AS part_name, pp.color_id, c.name AS color_name,
