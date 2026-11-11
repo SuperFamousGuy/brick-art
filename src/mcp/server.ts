@@ -11,6 +11,8 @@ import { listColors } from '../lookup/list-colors.ts';
 import { databaseStatus } from '../lookup/status.ts';
 import { findByUse } from '../lookup/find-by-use.ts';
 import { findCompatible } from '../lookup/find-compatible.ts';
+import { searchProjects } from '../lookup/search-projects.ts';
+import { getProject } from '../lookup/get-project.ts';
 import { findSubstitutes } from '../lookup/find-substitutes.ts';
 import { TRAITS } from '../derive/traits.ts';
 import type { ConnectionType } from '../types.ts';
@@ -170,6 +172,42 @@ export function createServer(dataDir: string): McpServer {
       },
     },
     withDb((db, args) => listColors(db, args)),
+  );
+
+  const CREDIT = 'Every result carries its author, license, and URL; credit them when you use the model.';
+
+  server.registerTool(
+    'search_projects',
+    {
+      description: `Returns existing projects (official LEGO sets and fan models) matching name, theme, year, kind, size, and part filters; projects with build positions come first. ${CREDIT}`,
+      inputSchema: {
+        nameContains: z.string().optional()
+          .describe('Case-insensitive substring of the project name; an exact name match ranks first.'),
+        theme: z.string().optional().describe('Theme or parent theme name, case-insensitive, such as "Town".'),
+        year: range.optional().describe('Release year: one integer or an inclusive [min, max] range.'),
+        kind: z.enum(['official', 'fan']).optional().describe('"official" for LEGO sets, "fan" for fan models.'),
+        partCount: range.optional().describe('Total part count: one integer or an inclusive [min, max] range.'),
+        usesPart: z.string().optional().describe(`${partNumText} Keeps projects that contain this part.`),
+        usesColor: int.optional()
+          .describe('Rebrickable color id; keeps projects containing the part in that color, or any part in it when usesPart is omitted.'),
+        hasPositions: z.boolean().optional()
+          .describe('true keeps only projects with build positions; false keeps only those without.'),
+        limit,
+      },
+    },
+    withDb((db, args) => searchProjects(db, args)),
+  );
+
+  server.registerTool(
+    'get_project',
+    {
+      description: `Returns full detail for one project: parts with colors and quantities, and its submodels. ${CREDIT}`,
+      inputSchema: { id: int.describe('Project id from search_projects.') },
+    },
+    (args: { id: number }): ToolResult => {
+      const r = withDb((db, a: { id: number }) => getProject(db, a.id))(args);
+      return !r.isError && r.content[0]!.text === 'null' ? fail(`No project with id ${args.id}.`) : r;
+    },
   );
 
   server.registerTool(
