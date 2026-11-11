@@ -166,6 +166,8 @@ export async function buildRelease(opts: {
   dataDir: string; repoRoot: string; outDir: string; now?: () => Date; seed?: Partial<SeedOptions>;
   /** Test hook: fixtures have far fewer than 1,000 parts, so they cannot reach the default 0.95. */
   minPartMatch?: number;
+  /** The CI run and commit that built the release, so a release can be traced to its source. */
+  source?: { runId: string; sha: string } | null;
 }): Promise<ReleaseResult> {
   const now = opts.now ?? (() => new Date());
   const built = now();
@@ -195,7 +197,7 @@ export async function buildRelease(opts: {
       full: await variantAsset(seeded.dbFile, 'full', opts.outDir),
     };
     await writeFile(join(opts.outDir, 'CREDITS.md'), credits);
-    const meta = { tag, schemaVersion: SEED_VERSION, builtAt: built.toISOString(), variants };
+    const meta = { tag, schemaVersion: SEED_VERSION, builtAt: built.toISOString(), source: opts.source ?? null, variants };
     await writeFile(join(opts.outDir, 'release.json'), JSON.stringify(meta, null, 2) + '\n');
   } finally {
     await rm(work, { recursive: true, force: true });

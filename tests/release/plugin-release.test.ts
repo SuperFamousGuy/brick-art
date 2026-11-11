@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VERSION_FILES, defaultNotes, nextVersion, parseArgs, setVersion } from '../../src/release/plugin-release.ts';
+import {
+  VERSION_FILES, dataReleaseProblems, defaultNotes, nextVersion, parseArgs, setVersion, withDataLine,
+} from '../../src/release/plugin-release.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -60,4 +62,38 @@ test('parseArgs reads the version and options', () => {
   assert.throws(() => parseArgs(['patch', '--data-run']), /needs a value/);
   assert.throws(() => parseArgs(['patch', '--data-run', 'abc']), /run id/);
   assert.throws(() => parseArgs(['patch', '--bogus']), /unknown option/);
+});
+
+test('withDataLine appends the data release unless the notes name it', () => {
+  const out = withDataLine('## Features\n\n- New tool\n\n', 'data-3-20261111');
+  assert.match(out, /^## Features\n\n- New tool\n\nShips with the parts database from \[data-3-20261111\]/);
+  assert.equal(withDataLine('Uses data-3-20261111.\n', 'data-3-20261111'), 'Uses data-3-20261111.\n');
+});
+
+test('dataReleaseProblems accepts a release built by the run, with both files attached', () => {
+  const meta = {
+    tag: 'data-3-20261111', source: { runId: '7', sha: 'abc' },
+    variants: { standard: { file: 'standard.db.gz' }, full: { file: 'full.db.gz' } },
+  };
+  const assets = new Set(['standard.db.gz', 'full.db.gz', 'release.json']);
+  assert.deepEqual(dataReleaseProblems('data-3-20261111', meta, assets, '7', 'abc'), []);
+});
+
+test('dataReleaseProblems rejects another run, another commit, or a missing file', () => {
+  const meta = {
+    tag: 'data-3-20261111', source: { runId: '8', sha: 'def' },
+    variants: { standard: { file: 'standard.db.gz' }, full: { file: 'full.db.gz' } },
+  };
+  const problems = dataReleaseProblems('data-3-20261111', meta, new Set(['standard.db.gz']), '7', 'abc');
+  assert.equal(problems.length, 3);
+  assert.match(problems.join('\n'), /run 8, expected 7/);
+  assert.match(problems.join('\n'), /commit def, expected abc/);
+  assert.match(problems.join('\n'), /full file full\.db\.gz is not attached/);
+});
+
+test('dataReleaseProblems rejects a release with no recorded source or variant', () => {
+  const problems = dataReleaseProblems('data-3-20261111', { tag: 'data-3-20261111' }, new Set(), '7', 'abc');
+  assert.match(problems.join('\n'), /run undefined/);
+  assert.match(problems.join('\n'), /no standard variant/);
+  assert.match(problems.join('\n'), /no full variant/);
 });

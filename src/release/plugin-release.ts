@@ -10,6 +10,7 @@ export const VERSION_FILES = ['.claude-plugin/plugin.json', 'package.json', 'pac
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)$/;
 const WORKFLOW = 'data-release.yml';
+const WORKFLOW_NAME = 'data-release';
 
 /** The next version: `patch`, `minor`, `major`, or an explicit `X.Y.Z` that is newer than `current`. */
 export function nextVersion(current: string, spec: string): string {
@@ -64,6 +65,37 @@ export function defaultNotes(version: string, dataTag: string, subjects: string[
   ].join('\n');
 }
 
+/** `notes` with a line naming the data release, unless the notes already name it. */
+export function withDataLine(notes: string, dataTag: string): string {
+  if (notes.includes(dataTag)) return notes;
+  return `${notes.trimEnd()}\n\nShips with the parts database from [${dataTag}](https://github.com/SuperFamousGuy/brick-art/releases/tag/${dataTag}) (schema ${SEED_VERSION}).\n`;
+}
+
+export interface DataReleaseMeta {
+  tag?: unknown;
+  source?: { runId?: unknown; sha?: unknown } | null;
+  variants?: Record<string, { file?: unknown } | undefined>;
+}
+
+/**
+ * Problems that stop `tag` from shipping: release.json must name `tag`, record that run `runId` built
+ * it from commit `sha`, and list both variants, and each variant's file must be an asset of the release.
+ */
+export function dataReleaseProblems(
+  tag: string, meta: DataReleaseMeta, assets: ReadonlySet<string>, runId: string, sha: string,
+): string[] {
+  const problems: string[] = [];
+  if (meta.tag !== tag) problems.push(`release.json names tag ${String(meta.tag)}, expected ${tag}`);
+  if (meta.source?.runId !== runId) problems.push(`built by run ${String(meta.source?.runId)}, expected ${runId}`);
+  if (meta.source?.sha !== sha) problems.push(`built from commit ${String(meta.source?.sha)}, expected ${sha}`);
+  for (const v of ['standard', 'full']) {
+    const file = meta.variants?.[v]?.file;
+    if (typeof file !== 'string') problems.push(`release.json has no ${v} variant`);
+    else if (!assets.has(file)) problems.push(`${v} file ${file} is not attached to the release`);
+  }
+  return problems;
+}
+
 export interface ReleaseArgs {
   spec: string;
   dryRun: boolean;
@@ -101,10 +133,13 @@ const shLoud = (cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEn
   execFileSync(cmd, args, { cwd, stdio: 'inherit', env: env ?? process.env });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-interface Run { databaseId: number; headSha: string; createdAt: string; status: string; conclusion: string; url: string }
+interface Run {
+  databaseId: number; headSha: string; createdAt: string; status: string; conclusion: string; url: string; workflowName: string;
+}
+const RUN_FIELDS = 'databaseId,headSha,createdAt,status,conclusion,url,workflowName';
 
 function viewRun(repoRoot: string, id: string): Run {
-  return JSON.parse(sh('gh', ['run', 'view', id, '--json', 'databaseId,headSha,createdAt,status,conclusion,url'], repoRoot)) as Run;
+  return JSON.parse(sh('gh', ['run', 'view', id, '--json', RUN_FIELDS], repoRoot)) as Run;
 }
 
 /** Starts the data-release workflow on main and returns its run once GitHub lists it. */
@@ -115,7 +150,7 @@ async function dispatchDataRun(repoRoot: string, head: string): Promise<Run> {
     await sleep(5_000);
     const runs = JSON.parse(sh('gh', [
       'run', 'list', '--workflow', WORKFLOW, '--branch', 'main', '--event', 'workflow_dispatch', '--limit', '10',
-      '--json', 'databaseId,headSha,createdAt,status,conclusion,url',
+      '--json', RUN_FIELDS,
     ], repoRoot)) as Run[];
     const run = runs.find((r) => r.headSha === head && Date.parse(r.createdAt) >= since);
     if (run !== undefined) return run;
@@ -129,15 +164,11 @@ async function verifyData(repoRoot: string, run: Run): Promise<string> {
   if (release === null) throw new Error(`no data release for schema ${SEED_VERSION}`);
   const metaUrl = release.assets.get('release.json');
   if (metaUrl === undefined) throw new Error(`${release.tag} has no release.json`);
-  const meta = await (await fetch(metaUrl, { headers: { 'User-Agent': 'brick-art-release' } })).json() as {
-    builtAt?: string; variants?: Record<string, unknown>;
-  };
-  if (typeof meta.builtAt !== 'string' || Date.parse(meta.builtAt) < Date.parse(run.createdAt)) {
-    throw new Error(`newest data release ${release.tag} was built at ${meta.builtAt}, before run ${run.databaseId} started`);
-  }
-  for (const v of ['standard', 'full']) {
-    if (meta.variants?.[v] === undefined) throw new Error(`${release.tag} has no ${v} variant`);
-  }
+  const res = await fetch(metaUrl, { headers: { 'User-Agent': 'brick-art-release' } });
+  if (!res.ok) throw new Error(`${release.tag} release.json: HTTP ${res.status}`);
+  const meta = await res.json() as DataReleaseMeta;
+  const problems = dataReleaseProblems(release.tag, meta, new Set(release.assets.keys()), String(run.databaseId), run.headSha);
+  if (problems.length > 0) throw new Error(`newest data release ${release.tag}: ${problems.join('; ')}`);
   const dataDir = mkdtempSync(join(tmpdir(), 'brick-art-release-'));
   try {
     shLoud('node', ['src/entry/update.mjs', '--variant', 'standard'], repoRoot, { ...process.env, BRICK_ART_DATA: dataDir });
@@ -153,6 +184,8 @@ async function verifyData(repoRoot: string, run: Run): Promise<string> {
 
 export async function main(argv: string[], repoRoot: string): Promise<void> {
   const args = parseArgs(argv);
+  // Read now, so a bad path fails before anything is published.
+  const customNotes = args.notesFile === null ? null : readFileSync(args.notesFile, 'utf8');
 
   step('Checking the repo');
   if (sh('git', ['branch', '--show-current'], repoRoot) !== 'main') throw new Error('releases run from main');
@@ -187,6 +220,7 @@ export async function main(argv: string[], repoRoot: string): Promise<void> {
   let run: Run;
   if (args.dataRun !== null) {
     run = viewRun(repoRoot, args.dataRun);
+    if (run.workflowName !== WORKFLOW_NAME) throw new Error(`run ${args.dataRun} is ${run.workflowName}, not ${WORKFLOW_NAME}`);
     if (run.headSha !== head) throw new Error(`run ${args.dataRun} built ${run.headSha.slice(0, 7)}, not HEAD ${head.slice(0, 7)}`);
   } else {
     run = await dispatchDataRun(repoRoot, head);
@@ -207,6 +241,10 @@ export async function main(argv: string[], repoRoot: string): Promise<void> {
   console.log(`data release ${dataTag} installs`);
 
   step(`Committing and tagging ${tag}`);
+  // The data build can take hours: the checkout must still be the commit that was tested and built.
+  if (sh('git', ['branch', '--show-current'], repoRoot) !== 'main') throw new Error('the checkout left main during the data build');
+  if (sh('git', ['rev-parse', 'HEAD'], repoRoot) !== head) throw new Error('local main moved during the data build; start over');
+  if (sh('git', ['status', '--porcelain'], repoRoot) !== '') throw new Error('the working tree changed during the data build');
   sh('git', ['fetch', 'origin', 'main'], repoRoot);
   if (sh('git', ['rev-parse', 'origin/main'], repoRoot) !== head) throw new Error('origin/main moved during the data build; start over');
   for (const f of VERSION_FILES) {
@@ -219,17 +257,14 @@ export async function main(argv: string[], repoRoot: string): Promise<void> {
   shLoud('git', ['push', '--atomic', 'origin', 'main', tag], repoRoot);
 
   step(`Publishing the ${tag} release`);
-  let notesFile = args.notesFile;
-  let tmpNotes: string | null = null;
-  if (notesFile === null) {
-    tmpNotes = mkdtempSync(join(tmpdir(), 'brick-art-notes-'));
-    notesFile = join(tmpNotes, 'notes.md');
-    writeFileSync(notesFile, defaultNotes(version, dataTag, subjects));
-  }
+  const notes = customNotes === null ? defaultNotes(version, dataTag, subjects) : withDataLine(customNotes, dataTag);
+  const tmpNotes = mkdtempSync(join(tmpdir(), 'brick-art-notes-'));
+  const notesFile = join(tmpNotes, 'notes.md');
+  writeFileSync(notesFile, notes);
   try {
     shLoud('gh', ['release', 'create', tag, '--title', `brick-art ${tag}`, '--notes-file', notesFile, '--latest', '--verify-tag'], repoRoot);
   } finally {
-    if (tmpNotes !== null) rmSync(tmpNotes, { recursive: true, force: true });
+    rmSync(tmpNotes, { recursive: true, force: true });
   }
   console.log(`\nreleased ${tag} with data ${dataTag}`);
 }
