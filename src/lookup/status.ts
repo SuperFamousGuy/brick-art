@@ -17,6 +17,37 @@ export interface DatabaseStatus {
   failedSources: string[];
   lastError: string | null;
   warnings: string[];
+  /** One short credit line per source the database uses. */
+  credits: string[];
+}
+
+/** Date (YYYY-MM-DD) of the newest Rebrickable download in the sources table, or null. */
+export function rebrickableDate(db: DatabaseSync): string | null {
+  const row = db.prepare("SELECT max(downloaded_at) AS d FROM sources WHERE name NOT IN ('ldraw', 'ldcad')")
+    .get() as { d: string | null };
+  return row.d === null ? null : row.d.slice(0, 10);
+}
+
+const REBRICKABLE_CREDIT = 'Data sourced from Rebrickable (rebrickable.com).';
+
+/** One credit line per source: Rebrickable, the LDraw library, LDCad, the OMR when used, and each fan source. */
+function creditLines(db: DatabaseSync, m: Map<string, string>): string[] {
+  const date = rebrickableDate(db);
+  const lines = [date === null ? REBRICKABLE_CREDIT : `Data sourced from Rebrickable (rebrickable.com), downloaded ${date}.`];
+  const release = m.get('ldraw_release');
+  lines.push(`LDraw Parts Library${release ? ` ${release}` : ''} (ldraw.org), CC BY 4.0.`);
+  const commit = m.get('ldcad_commit');
+  lines.push(`LDCad shadow library${commit ? ` ${commit.slice(0, 12)}` : ''} by Roland Melkert, CC BY-SA 4.0.`);
+  if (Number(m.get('count_projects_with_positions') ?? 0) > 0) {
+    lines.push('LDraw Official Model Repository (library.ldraw.org/omr) and its authors, CC BY 4.0 or CCAL 2.0 per file.');
+  }
+  const fan = db.prepare("SELECT DISTINCT source, url FROM projects WHERE kind = 'fan' ORDER BY source")
+    .all() as { source: string; url: string | null }[];
+  for (const f of fan) {
+    const fanCommit = m.get(`fan_commit_${f.source}`);
+    lines.push(`Fan models from ${f.source}${f.url ? ` (${f.url})` : ''}${fanCommit ? `, commit ${fanCommit.slice(0, 12)}` : ''}, license per file.`);
+  }
+  return lines;
 }
 
 /**
@@ -38,6 +69,7 @@ export function databaseStatus(
     return {
       ...base, state: seeding ? 'seeding' : fallback, seededAt: null, ldrawRelease: null, ldcadCommit: null,
       matchRateTop1000: null, counts: {}, variant: update.variant, placementMatchRate: null, failedSources: [],
+      credits: [REBRICKABLE_CREDIT],
     };
   }
   const m = new Map(
@@ -68,5 +100,6 @@ export function databaseStatus(
     ldcadCommit: m.get('ldcad_commit') ?? null,
     matchRateTop1000: rate,
     counts,
+    credits: creditLines(db, m),
   };
 }

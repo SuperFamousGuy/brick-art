@@ -135,6 +135,27 @@ test('status on a standard database reports counts and release info without the 
   }
 });
 
+test('status credits every source the database uses', () => {
+  const s = databaseStatus(std, ready, false, update);
+  assert.equal(s.credits.length, 4);
+  assert.match(s.credits[0]!, /^Data sourced from Rebrickable \(rebrickable\.com\), downloaded 2026-11-09\.$/);
+  assert.match(s.credits[1]!, /LDraw Parts Library 2026-10 .*CC BY 4\.0/);
+  assert.match(s.credits[2]!, /LDCad shadow library abc123 .*CC BY-SA 4\.0/);
+  assert.match(s.credits[3]!, /LDraw Official Model Repository .*CCAL 2\.0/);
+  const f = databaseStatus(fallback, ready, false, update);
+  assert.equal(f.credits.length, 3);
+  assert.deepEqual(databaseStatus(null, ready, false, update).credits, ['Data sourced from Rebrickable (rebrickable.com).']);
+  big.prepare("INSERT INTO projects (id, source, source_key, kind, name, url) VALUES (900001, 'town', 't.ldr', 'fan', 't', 'https://example.test/town')").run();
+  big.prepare("INSERT INTO manifest (key, value) VALUES ('fan_commit_town', 'f00dfacef00dface')").run();
+  try {
+    assert.equal(databaseStatus(big, ready, false, update).credits.at(-1),
+      'Fan models from town (https://example.test/town), commit f00dfacef00d, license per file.');
+  } finally {
+    big.prepare('DELETE FROM projects WHERE id = 900001').run();
+    big.prepare("DELETE FROM manifest WHERE key = 'fan_commit_town'").run();
+  }
+});
+
 test('status after a local reseed reports a local origin even when update.json names a release', () => {
   const s = databaseStatus(std, ready, false, update);
   assert.equal(s.origin, 'local');

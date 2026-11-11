@@ -86,6 +86,13 @@ test('buildRelease writes both databases, release.json and CREDITS.md', async (t
   assert.match(credits, /https:\/\/example\.test\/fan/);
   assert.match(credits, /Mayor/);
   assert.match(credits, /Test Builder/);
+  const section = (name: string) => credits.split('### ').find((x) => x.startsWith(`${name}\n`)) ?? '';
+  assert.match(section('Rebrickable'), /License: .*Data sourced from Rebrickable\.\n- Version: downloaded 2026-11-09\n/);
+  assert.match(section('LDraw Parts Library'), /License: CC BY 4\.0\n- Version: release 2026-10\n/);
+  assert.match(section('LDCad shadow library'), /License: CC BY-SA 4\.0\n- Version: commit abc123\n/);
+  assert.match(section('LDraw Official Model Repository'), /License: CC BY 4\.0 or CCAL 2\.0, per file\n[^]*  - Test Builder\n/);
+  assert.match(section('Fixture Fan Town'),
+    /Link: https:\/\/example\.test\/fan\n- License: license per file\n- Version: commit f00dfacef00dface\n- Authors:\n[^]*  - Mayor\n/);
 });
 
 test('buildRelease refuses to publish when the placement rate is below the gate', async (t) => {

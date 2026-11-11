@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { gzipSync } from 'node:zlib';
 import { loadCurated, curatedDir } from '../curated/load.ts';
 import { SEED_VERSION } from '../db/schema.ts';
+import { rebrickableDate } from '../lookup/status.ts';
 import { licenseAllowed } from '../projects/license.ts';
 import { runSeed } from '../seed/seed.ts';
 import type { SeedOptions } from '../seed/seed.ts';
@@ -93,6 +94,10 @@ function distinct(db: DatabaseSync, sql: string, ...args: string[]): string[] {
 
 async function creditsText(db: DatabaseSync, repoRoot: string): Promise<string> {
   const manifest = manifestOf(db);
+  const source = (name: string, link: string, license: string, version: string) =>
+    [`### ${name}`, '', `- Link: ${link}`, `- License: ${license}`, `- Version: ${version}`];
+  const authors = (list: string[], fallback: string) =>
+    ['- Authors:', ...(list.length > 0 ? list : [fallback]).map((a) => `  - ${a}`)];
   const lines = [
     '# Credits and license',
     '',
@@ -101,24 +106,26 @@ async function creditsText(db: DatabaseSync, repoRoot: string): Promise<string> 
     '',
     '## Sources',
     '',
-    '- Data sourced from Rebrickable (https://rebrickable.com/downloads/).',
-    `- LDraw Parts Library${manifest.get('ldraw_release') ? `, release ${manifest.get('ldraw_release')}` : ''} (https://www.ldraw.org/).`,
-    `- LDCad shadow library${manifest.get('ldcad_commit') ? `, commit ${manifest.get('ldcad_commit')}` : ''} (https://github.com/RolandMelkert/LDCadShadowLibrary).`,
-    '- LDraw Official Model Repository (https://library.ldraw.org/omr), by these authors:',
+    ...source('Rebrickable', 'https://rebrickable.com/downloads/',
+      'Rebrickable terms of use. Data sourced from Rebrickable.',
+      `downloaded ${rebrickableDate(db) ?? 'unknown'}`),
+    '',
+    ...source('LDraw Parts Library', 'https://www.ldraw.org/', 'CC BY 4.0',
+      `release ${manifest.get('ldraw_release') || 'unknown'}`),
+    '',
+    ...source('LDCad shadow library', 'https://github.com/RolandMelkert/LDCadShadowLibrary', 'CC BY-SA 4.0',
+      `commit ${manifest.get('ldcad_commit') || 'unknown'}`),
+    '',
+    ...source('LDraw Official Model Repository', 'https://library.ldraw.org/omr',
+      'CC BY 4.0 or CCAL 2.0, per file', `models fetched ${(manifest.get('started_at') ?? '').slice(0, 10) || 'unknown'}`),
+    ...authors(distinct(db, "SELECT DISTINCT author FROM projects WHERE kind = 'official' AND has_positions = 1 AND author IS NOT NULL"), '(none)'),
   ];
-  const omr = distinct(db, "SELECT DISTINCT author FROM projects WHERE kind = 'official' AND has_positions = 1 AND author IS NOT NULL");
-  lines.push(...(omr.length > 0 ? omr.map((a) => `  - ${a}`) : ['  - (none)']));
   const fan = (await loadCurated(curatedDir(repoRoot))).fanSources.slice().sort((a, b) => a.id.localeCompare(b.id));
   const used = new Set((db.prepare("SELECT DISTINCT source FROM projects WHERE kind = 'fan'").all() as { source: string }[])
     .map((r) => r.source));
-  const listed = fan.filter((s) => used.has(s.id));
-  if (listed.length > 0) {
-    lines.push('', '## Fan sources', '');
-    for (const s of listed) {
-      lines.push(`- ${s.name} (${s.homepage}), by these authors:`);
-      const authors = distinct(db, 'SELECT DISTINCT author FROM projects WHERE source = ? AND author IS NOT NULL', s.id);
-      lines.push(...(authors.length > 0 ? authors.map((a) => `  - ${a}`) : [`  - ${s.designer}`]));
-    }
+  for (const s of fan.filter((f) => used.has(f.id))) {
+    lines.push('', ...source(s.name, s.homepage, 'license per file', `commit ${manifest.get(`fan_commit_${s.id}`) || 'unknown'}`));
+    lines.push(...authors(distinct(db, 'SELECT DISTINCT author FROM projects WHERE source = ? AND author IS NOT NULL', s.id), s.designer));
   }
   return lines.join('\n') + '\n';
 }
