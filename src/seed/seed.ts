@@ -350,6 +350,25 @@ interface StageInput {
 type Maps = { parts: Map<string, string>; colors: Map<number, number> };
 type SetUpdate = { id: number; author: string | null; license: string | null; url: string };
 
+const mediaId = (f: OmrFile): number => Number(/\/omr_models\/(\d+)\//.exec(f.url)?.[1] ?? 0);
+
+/**
+ * OMR re-uploads keep their file name under a new media id. Keeps one file per name, the one with the
+ * highest media id (the latest upload), in the original order.
+ */
+function dedupeOmr(files: OmrFile[], log: (msg: string) => void): { files: OmrFile[]; dropped: number } {
+  const keep = new Map<string, OmrFile>();
+  for (const f of files) {
+    const cur = keep.get(f.fileName);
+    if (cur === undefined) { keep.set(f.fileName, f); continue; }
+    const [kept, dropped] = mediaId(f) > mediaId(cur) ? [f, cur] : [cur, f];
+    keep.set(f.fileName, kept);
+    log(`omr duplicate ${f.fileName}: kept ${mediaId(kept)}, dropped ${mediaId(dropped)}`);
+  }
+  const kept = new Set(keep.values());
+  return { files: files.filter((f) => kept.has(f)), dropped: files.length - kept.size };
+}
+
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 const sumParts = (parts: { quantity: number }[]) => parts.reduce((n, p) => n + p.quantity, 0);
 
@@ -406,6 +425,8 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
   let placementRate: number | '' = '';
   let skippedLicense = 0;
   let omrFilesFailed = 0;
+  let omrDuplicates = 0;
+  let keyClashes = 0;
 
   // The maps are needed by OMR and every fan source, so a failure here fails all of them.
   let maps: Maps | null = null;
@@ -434,6 +455,10 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         log(`omr: ${r.files.length} files (${r.fetched} fetched, ${r.fromCache} cached, ${r.failed} failed)`);
         for (const f of r.failedUrls.slice(0, 20)) log(`omr download failed: ${f.url}: ${f.reason}`);
       }
+      const deduped = dedupeOmr(files, log);
+      files = deduped.files;
+      omrDuplicates = deduped.dropped;
+      const omrKeys = new Set<string>();
       const updates: SetUpdate[] = [];
       const attached = new Set<number>();
       let placements = 0;
@@ -460,16 +485,23 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
           log(`omr file failed: ${f.fileName}: ${errText(err)}`);
           continue;
         }
+        const set = setByNum.get(f.setNum);
+        const attach = set !== undefined && !f.isBModel && !attached.has(set.id);
+        if (!attach && omrKeys.has(f.fileName)) {
+          keyClashes++;
+          log(`omr key clash: ${f.fileName} already written; skipped ${f.url}`);
+          continue;
+        }
         placements += a.stats.placements;
         resolved += a.stats.resolved;
-        const set = setByNum.get(f.setNum);
-        if (set && !f.isBModel && !attached.has(set.id)) {
+        if (attach) {
           // A set's main model gives the set positions; the set keeps its Rebrickable parts list.
           attached.add(set.id);
           updates.push({ id: set.id, author, license, url: f.url });
           add(set.id, a, null);
           continue;
         }
+        omrKeys.add(f.fileName);
         const id = nextProjectId++;
         const stem = f.fileName.replace(/\.[^.]+$/, '');
         const suffix = stem.slice(f.setNum.length).replace(/^[\s_-]+/, '');
@@ -507,7 +539,14 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
         try {
           const { root, files } = await fetchFanSource(input.cacheDir, src, opts.fanFetch);
           const built = buildFanProjects(src, root, files, maps, nextSubmodelId);
+          const fanKeys = new Set<string>();
           for (const p of built.projects) {
+            if (fanKeys.has(p.root)) {
+              keyClashes++;
+              log(`fan ${src.id} key clash: ${p.root} already written; skipped`);
+              continue;
+            }
+            fanKeys.add(p.root);
             const id = nextProjectId++;
             add(id, p, {
               id, source: src.id, sourceKey: p.root, kind: 'fan', name: p.root.replace(/\.[^.]+$/, ''),
@@ -538,6 +577,8 @@ async function writeProjectStages(db: DatabaseSync, input: StageInput): Promise<
     count_projects_fan: count("SELECT count(*) AS n FROM projects WHERE kind = 'fan'"),
     count_models_skipped_license: skippedLicense,
     count_omr_files_failed: omrFilesFailed,
+    count_omr_duplicates: omrDuplicates,
+    count_project_key_clashes: keyClashes,
     failed_sources: failedSources.join(','),
   };
 }

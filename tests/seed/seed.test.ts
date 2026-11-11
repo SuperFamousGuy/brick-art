@@ -362,3 +362,52 @@ test('one failing fan source keeps OMR and the other fan sources', async (t) => 
   assert.equal(s.count('SELECT count(*) AS n FROM submodels'), 4);
   assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /fan broken_fan failed/);
 });
+
+/** OMR pages listing set pages 1 and 2, where `files` maps a media path to its content. */
+function omrSite(files: Record<string, string>): Map<string, FakeReply> {
+  const byId = new Map<string, string[]>();
+  for (const path of Object.keys(files)) {
+    const id = path.split('/')[3]!;
+    byId.set(id, [...(byId.get(id) ?? []), path]);
+  }
+  const ids = [...byId.keys()];
+  const pages = new Map<string, FakeReply>([
+    ['/omr/sets?page=1', ids.map((id) => `<a href="/omr/sets/${id}">s</a>`).join('')],
+  ]);
+  for (const [id, paths] of byId) pages.set(`/omr/sets/${id}`, paths.map((p) => `<a href="${p}?v=1">f</a>`).join(''));
+  for (const [path, text] of Object.entries(files)) pages.set(path, text);
+  return pages;
+}
+
+const licensedAlt = (author: string) =>
+  MPD_BMODEL.replace('0 Author: B Builder', `0 Author: ${author}\n0 !LICENSE Licensed under CC BY 4.0`);
+
+test('an OMR re-upload under a new media id keeps only the latest file', async (t) => {
+  const s = await seeded(t, 'standard', omrSite({
+    '/media/omr_models/1/S1-1.mpd': MPD_10001_MINI,
+    '/media/omr_models/12/S1-1_Alt.mpd': licensedAlt('Old Upload'),
+    '/media/omr_models/30/S1-1_Alt.mpd': licensedAlt('New Upload'),
+  }));
+  assert.equal(s.manifest.failed_sources, '');
+  assert.equal(s.manifest.count_omr_duplicates, '1');
+  assert.equal(s.manifest.count_project_key_clashes, '0');
+  const rows = s.db.prepare("SELECT author, url FROM projects WHERE source = 'omr'").all() as { author: string; url: string }[];
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.author, 'New Upload');
+  assert.match(rows[0]!.url, /\/omr_models\/30\//);
+  assert.match(await readFile(dataPaths(s.dataDir).log, 'utf8'), /omr duplicate S1-1_Alt\.mpd: kept 30, dropped 12/);
+});
+
+test('a duplicated OMR main attaches to its set once', async (t) => {
+  const newer = MPD_10001_MINI.replace('0 Author: Test Builder', '0 Author: Newer Builder');
+  const s = await seeded(t, 'standard', omrSite({
+    '/media/omr_models/40/S1-1.mpd': newer,
+    '/media/omr_models/8/S1-1.mpd': MPD_10001_MINI,
+  }));
+  assert.equal(s.manifest.failed_sources, '');
+  assert.equal(s.manifest.count_omr_duplicates, '1');
+  const set = s.db.prepare("SELECT * FROM projects WHERE source_key = 'S1-1'").get() as Record<string, unknown>;
+  assert.equal(set.author, 'Newer Builder');
+  assert.equal(s.count('SELECT count(*) AS n FROM submodels WHERE project_id = ?', set.id as number), 2);
+  assert.equal(s.count("SELECT count(*) AS n FROM projects WHERE source = 'omr'"), 0);
+});
