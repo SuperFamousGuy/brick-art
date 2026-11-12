@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { bookletHtml } from '../../src/instructions/booklet-html.ts';
+import { planCell } from '../../src/instructions/cell-plan.ts';
 import { layoutBooklet } from '../../src/instructions/layout.ts';
 import { calloutShotName, iconShotName, stepDigits, stepShotName, type ShotResult } from '../../src/instructions/render-steps.ts';
 import type { StepModel } from '../../src/instructions/steps.ts';
@@ -84,4 +85,32 @@ test('printToPdf writes a PDF', { skip: noBrowser, timeout: 60_000 }, async () =
   writeFileSync(join(dir, 'a.html'), '<!doctype html><title>t</title><p>hello');
   await printToPdf({ htmlPath: join(dir, 'a.html'), pdfPath: join(dir, 'a.pdf'), browser: browser! });
   assert.equal(readFileSync(join(dir, 'a.pdf')).subarray(0, 4).toString(), '%PDF');
+});
+
+function crowdedStep() {
+  const step = fakeStep(1, { callouts: 4, loose: 10 });
+  step.loose.forEach((p, i) => { p.part = `300${i}.dat`; });
+  for (const c of step.callouts) c.miniSteps = Array.from({ length: 4 }, () => c.miniSteps[0]!);
+  return step;
+}
+
+test('a crowded step gets a whole page and its content fits the cell', () => {
+  const step = crowdedStep();
+  assert.equal(planCell(step, 2).fits, false);
+  const model = fakeModel([section('test', [step, fakeStep(2)])]);
+  const pages = layoutBooklet(model).filter((p) => p.kind === 'steps');
+  assert.deepEqual(pages.map((p) => p.cells!.map((c) => [c.step, c.span])), [[[1, 3]], [[2, 1]]]);
+  const plan = planCell(step, 3);
+  assert.ok(plan.fits);
+  assert.ok(plan.bottom + 0.1 <= plan.h);
+  for (const b of plan.boxes) assert.ok(b.y + b.h <= plan.h && b.x + b.w <= plan.w);
+  const html = build(model);
+  assert.match(html, /grid-column:1 \/ span 3;[^"]*width:10\.2in;height:7\.7in/);
+});
+
+test('a one-callout step still fits a column', () => {
+  const step = fakeStep(1, { callouts: 1 });
+  const plan = planCell(step, 2);
+  assert.ok(plan.fits && plan.bottom + 0.1 <= plan.h);
+  assert.equal(layoutBooklet(fakeModel([section('test', [step])]))[1]!.cells![0]!.span, 2);
 });

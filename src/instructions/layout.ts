@@ -1,7 +1,8 @@
+import { planCell } from './cell-plan.ts';
 import type { Section, Step, StepModel } from './steps.ts';
 
-/** span 2 = a double-size cell: it takes a whole column (both rows) of the 3 x 2 grid. */
-export interface Cell { step: number; span: 1 | 2 }
+/** span 2 = a full column (both rows) of the 3 x 2 grid; span 3 = the whole page, for a step whose callouts do not fit in a column. */
+export interface Cell { step: number; span: 1 | 2 | 3 }
 export interface Page { kind: 'cover' | 'section' | 'steps' | 'parts'; sectionId?: string; cells?: Cell[] }
 
 export const GRID_COLS = 3;
@@ -17,11 +18,18 @@ export interface Placed { row: number; col: number; rows: number }
  * previous cell. A span-2 cell needs a whole free column, so it can only start in the top row.
  * Returns null when the cells do not all fit on one page.
  */
-export function placeCells(spans: (1 | 2)[]): Placed[] | null {
+export function placeCells(spans: (1 | 2 | 3)[]): Placed[] | null {
   const taken = Array.from({ length: GRID_ROWS }, () => new Array<boolean>(GRID_COLS).fill(false));
   const out: Placed[] = [];
   let cursor = 0; // row-major index of the next candidate spot
   for (const span of spans) {
+    if (span === 3) {
+      if (out.length > 0) return null;
+      taken.forEach((r) => r.fill(true));
+      out.push({ row: 0, col: 0, rows: 2 });
+      cursor = GRID_ROWS * GRID_COLS;
+      continue;
+    }
     let at = -1;
     for (let i = cursor; i < GRID_ROWS * GRID_COLS; i++) {
       const row = Math.floor(i / GRID_COLS);
@@ -42,8 +50,9 @@ export function placeCells(spans: (1 | 2)[]): Placed[] | null {
   return out;
 }
 
-export function cellSpan(step: Step): 1 | 2 {
-  return step.callouts.length > 0 || step.inserts.length > 0 || step.loose.length > BIG_LOOSE ? 2 : 1;
+export function cellSpan(step: Step): 1 | 2 | 3 {
+  if (step.callouts.length === 0 && step.inserts.length === 0 && step.loose.length <= BIG_LOOSE) return 1;
+  return planCell(step, 2).fits ? 2 : 3;
 }
 
 function stepPages(section: Section): Page[] {

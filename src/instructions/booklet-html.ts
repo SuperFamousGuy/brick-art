@@ -1,25 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { BOX_W, BOX_X, COL_GAP, COL_W, ITEM_H, ITEM_W, PAD, ROW_GAP, ROW_H, planCell } from './cell-plan.ts';
 import { PARTS_PER_PAGE, placeCells, type Cell, type Page } from './layout.ts';
 import {
   calloutShotName, DEFAULT_SHOT_SIZES, iconShotName, PIXEL_RATIO, stepDigits, stepShotName, type ShotResult,
 } from './render-steps.ts';
 import type { Section, Step, StepModel } from './steps.ts';
 
-// Page geometry, in inches. The sheet is 11 x 8.5 with 0.4in margins (as padding, so the background covers the whole sheet), so the content area is 10.2 x 7.7.
-const PAGE_H = 7.7;
-const COL_W = 3.3;
-const COL_GAP = 0.15;
-const ROW_H = 3.8;
-const ROW_GAP = 0.1;
-const PAD = 0.1;
-const IMG_W = COL_W - 2 * PAD;
-const BOX_X = 0.95;       // parts box left edge (right of the step number)
-const BOX_W = COL_W - BOX_X - PAD;
 const ICON = 0.38;
-const ITEM_W = 0.52;
-const ITEM_H = 0.6;
 
 const esc = (s: unknown) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const n = (v: number) => String(Number(v.toFixed(3)));
@@ -60,103 +49,64 @@ function lastShot(ctx: Ctx, section: Section | undefined): ShotResult | undefine
 }
 
 function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: number; rows: number }): string {
-  const w = COL_W;
-  const h = cell.span === 2 ? PAGE_H : ROW_H;
+  const plan = planCell(step, cell.span);
+  const { w, h } = plan;
   const parts: string[] = [];
   const over: string[] = [];
   const id = `a${step.number}`;
 
   parts.push(`<div class="num" style="left:${n(PAD)}in;top:0">${step.number}</div>`);
-
-  // Parts box: one icon per part and color, with its count.
-  const counts = new Map<string, { part: string; color: number; count: number }>();
-  for (const p of step.loose) {
-    const key = `${p.part}\u0000${p.color}`;
-    const row = counts.get(key) ?? { part: p.part, color: p.color, count: 0 };
-    row.count++;
-    counts.set(key, row);
-  }
-  let boxBottom = 0.65;
-  if (counts.size > 0) {
-    const perRow = Math.max(1, Math.floor((BOX_W - 0.1) / ITEM_W));
-    const rows = Math.ceil(counts.size / perRow);
-    const boxH = rows * ITEM_H + 0.1;
-    const items = [...counts.values()].map((c) =>
+  if (plan.groups.length > 0) {
+    const items = plan.groups.map((c) =>
       `<div class="item" style="width:${n(ITEM_W)}in">${icon(ctx, c.part, c.color, ICON)}<span class="pq">${c.count}x</span></div>`).join('');
-    parts.push(box(BOX_X, 0.08, BOX_W, boxH, 'partsbox', items));
-    boxBottom = Math.max(boxBottom, 0.08 + boxH + 0.08);
+    parts.push(box(BOX_X, 0.08, BOX_W, plan.partsBoxH, 'partsbox', items));
   }
 
-  // Step image.
+  // Step image: a fixed 4:3 area; the picture is centred inside it (object-fit: contain).
   const shot = ctx.shots.get(stepShotName(step.number, ctx.digits));
   const [pw, ph] = shot ? pngSize(shot.png, [DEFAULT_SHOT_SIZES.step[0] * PIXEL_RATIO, DEFAULT_SHOT_SIZES.step[1] * PIXEL_RATIO]) : [4, 3];
-  const imgH = IMG_W * ph / pw;
-  const imgY = boxBottom;
-  parts.push(`<div class="stepimg" style="left:${n(PAD)}in;top:${n(imgY)}in;width:${n(IMG_W)}in;height:${n(imgH)}in">${img(shot, 'shot')}</div>`);
-  if (step.rotated) parts.push(`<div class="rot" style="left:${n(COL_W - PAD - 0.5)}in;top:${n(imgY + 0.05)}in">${ROTATE_ICON}</div>`);
+  const im = plan.img;
+  parts.push(`<div class="stepimg" style="left:${n(im.x)}in;top:${n(im.y)}in;width:${n(im.w)}in;height:${n(im.h)}in">${img(shot, 'shot')}</div>`);
+  if (step.rotated) parts.push(`<div class="rot" style="left:${n(im.x + im.w - 0.5)}in;top:${n(im.y + 0.05)}in">${ROTATE_ICON}</div>`);
+  const fit = Math.min(im.w / pw, im.h / ph);
+  const shown = { w: pw * fit, h: ph * fit };
+  const origin = { x: im.x + (im.w - shown.w) / 2, y: im.y + (im.h - shown.h) / 2 };
 
-  // Callouts and inserts below the image.
-  type Item = { kind: 'callout'; i: number; n: number; qty: number } | { kind: 'insert'; i: number; qty: number };
-  const items: Item[] = [
-    ...step.callouts.map((c, i): Item => ({ kind: 'callout', i, n: c.miniSteps.length, qty: c.quantity })),
-    ...step.inserts.map((c, i): Item => ({ kind: 'insert', i, qty: c.quantity })),
-  ];
-  const GAP = 0.08;
-  const HEAD = 0.28;
-  const dims = (it: Item) => {
-    const count = it.kind === 'callout' ? Math.max(1, it.n) : 1;
-    const cols = it.kind === 'insert' ? 1 : count <= 2 ? count : count <= 4 ? 2 : 3;
-    const rows = Math.ceil(count / cols);
-    const mw = Math.min(1.5, (IMG_W - 2 * GAP - (cols - 1) * GAP) / cols);
-    return { count, cols, rows, mw, mh: mw * 0.75, head: it.qty > 1 ? HEAD : 0 };
-  };
-  const heightOf = (it: Item, s: number) => { const d = dims(it); return 2 * GAP + d.head + d.rows * d.mh * s + (d.rows - 1) * GAP; };
-  const top0 = imgY + imgH + 0.12;
-  const avail = h - top0 - PAD;
-  const fixed = items.reduce((t, it) => { const d = dims(it); return t + 2 * GAP + d.head + (d.rows - 1) * GAP + 0.1; }, 0);
-  const flex = items.reduce((t, it) => { const d = dims(it); return t + d.rows * d.mh; }, 0);
-  const scale = fixed + flex > avail ? Math.max(0.4, (avail - fixed) / Math.max(0.01, flex)) : 1;
   const attachMarks = shot?.marks ?? [];
   let markIx = 0;
-  let y = top0;
-  for (const it of items) {
-    const d = dims(it);
-    const bh = heightOf(it, scale);
-    const mw = d.mw * scale;
-    const mh = d.mh * scale;
-    let inner = it.qty > 1 ? `<span class="qty" style="left:${n(GAP)}in;top:0.02in">${it.qty}x</span>` : '';
-    if (it.kind === 'callout') {
-      for (let k = 0; k < d.count; k++) {
-        const m = ctx.shots.get(calloutShotName(step.number, ctx.digits, it.i + 1, k + 1));
-        const cx = GAP + (k % d.cols) * (mw + GAP);
-        const cy = GAP + d.head + Math.floor(k / d.cols) * (mh + GAP);
-        inner += `<div class="mini" style="left:${n(cx)}in;top:${n(cy)}in;width:${n(mw)}in;height:${n(mh)}in">${img(m, 'shot')}`
-          + (d.count > 1 ? `<span class="mn">${k + 1}</span>` : '') + '</div>';
+  for (const b of plan.boxes) {
+    let inner = b.qty > 1 ? `<span class="qty" style="left:${n(b.gap)}in;top:0.02in">${b.qty}x</span>` : '';
+    if (b.kind === 'callout') {
+      for (let k = 0; k < b.count; k++) {
+        const m = ctx.shots.get(calloutShotName(step.number, ctx.digits, b.i + 1, k + 1));
+        const cx = b.gap + (k % b.cols) * (b.mw + b.gap);
+        const cy = b.gap + b.head + Math.floor(k / b.cols) * (b.mh + b.gap);
+        inner += `<div class="mini" style="left:${n(cx)}in;top:${n(cy)}in;width:${n(b.mw)}in;height:${n(b.mh)}in">${img(m, 'shot')}`
+          + (b.count > 1 ? `<span class="mn">${k + 1}</span>` : '') + '</div>';
       }
     } else {
-      const sec = ctx.model.sections.find((s) => s.id === step.inserts[it.i]!.sectionId);
-      const iw = 1.5 * scale;
-      inner += `<div class="mini" style="left:${n(GAP)}in;top:${n(GAP + d.head)}in;width:${n(iw)}in;height:${n(iw * 0.75)}in">${img(lastShot(ctx, sec), 'shot')}</div>`;
+      const sec = ctx.model.sections.find((s) => s.id === step.inserts[b.i]!.sectionId);
+      inner += `<div class="mini" style="left:${n(b.gap)}in;top:${n(b.gap + b.head)}in;width:${n(b.mw)}in;height:${n(b.mh)}in">${img(lastShot(ctx, sec), 'shot')}</div>`;
     }
-    parts.push(box(PAD, y, IMG_W, bh, `callout${it.kind === 'insert' ? ' insert' : ''}`, inner));
-    if (it.kind === 'callout') {
-      const count = step.callouts[it.i]!.attach.length;
+    parts.push(box(b.x, b.y, b.w, b.h, `callout${b.kind === 'insert' ? ' insert' : ''}`, inner));
+    if (b.kind === 'callout') {
+      const count = step.callouts[b.i]!.attach.length;
       for (let j = 0; j < count; j++) {
         const mark = attachMarks[markIx++];
         if (!mark) continue;
-        const ex = PAD + mark[0] / pw * IMG_W;
-        const ey = imgY + mark[1] / ph * imgH;
-        const sx = PAD + IMG_W * (j + 1) / (count + 1);
-        over.push(`<line class="arrow" x1="${n(sx)}" y1="${n(y)}" x2="${n(ex)}" y2="${n(ey)}" marker-end="url(#${id})"/>`);
+        const ex = origin.x + mark[0] / pw * shown.w;
+        const ey = origin.y + mark[1] / ph * shown.h;
+        const [sx, sy] = plan.side ? [b.x, b.y + b.h * (j + 1) / (count + 1)] : [b.x + b.w * (j + 1) / (count + 1), b.y];
+        over.push(`<line class="arrow" x1="${n(sx)}" y1="${n(sy)}" x2="${n(ex)}" y2="${n(ey)}" marker-end="url(#${id})"/>`);
       }
     }
-    y += bh + 0.1;
   }
 
   const svg = `<svg class="over" viewBox="0 0 ${n(w)} ${n(h)}" preserveAspectRatio="none"><defs>`
     + `<marker id="${id}" markerWidth="0.16" markerHeight="0.16" refX="0.14" refY="0.08" orient="auto" markerUnits="userSpaceOnUse">`
     + '<path d="M0 0L0.16 0.08L0 0.16z" fill="#333"/></marker></defs>' + over.join('') + '</svg>';
-  const style = `grid-row:${at.row + 1} / span ${at.rows};grid-column:${at.col + 1};height:${n(h)}in`;
+  const cols = cell.span === 3 ? '1 / span 3' : String(at.col + 1);
+  const style = `grid-row:${at.row + 1} / span ${at.rows};grid-column:${cols};width:${n(w)}in;height:${n(h)}in`;
   return `<div class="cell" style="${style}">${parts.join('')}${svg}</div>`;
 }
 
@@ -202,7 +152,7 @@ body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: #222;
 .page:last-child { break-after: auto; page-break-after: auto; }
 @media screen { body { padding: 0.2in 0; } .page { margin: 0 auto 0.3in; outline: 1px solid #9ec3dc; } }
 .grid { display: grid; grid-template-columns: repeat(3, ${COL_W}in); grid-template-rows: repeat(2, ${ROW_H}in); gap: ${ROW_GAP}in ${COL_GAP}in; }
-.cell { position: relative; width: ${COL_W}in; }
+.cell { position: relative; }
 .cell > div, .cell > svg { position: absolute; }
 .num { font-size: 0.55in; font-weight: 800; line-height: 0.65in; }
 .partsbox { display: flex; flex-wrap: wrap; align-content: flex-start; padding: 0.05in; background: #fff7e0; border: 0.02in solid #c8b27a; border-radius: 0.06in; }
