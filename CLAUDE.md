@@ -15,7 +15,8 @@ For each prompt, produce all three of these:
    color, and quantity.
 2. **Step-by-step instruction manual.** An ordered build sequence a person can
    follow, where each step adds a small set of parts to the model built so
-   far.
+   far. Delivered as a LEGO-style PDF booklet (`<name>-instructions.pdf`) with
+   one `<name>-step-NN.png` image per step, made by `render_instructions`.
 3. **Rendered images.** Studio-lit PNGs of the fully built model, front and
    three-quarter, made by the `render_model` tool from the official 3D shape of
    every part. Fall back to an SVG drawing only when rendering is unavailable.
@@ -42,6 +43,10 @@ Models are LDraw `.ldr` files, with `0 STEP` lines marking the build steps. The
 `render_model` MCP tool renders them with three.js in a headless Chromium-based
 browser, reading parts straight from the LDraw library zip (`src/render/`). The
 `build-model` skill (`skills/build-model/SKILL.md`) is the build workflow.
+
+The `render_instructions` MCP tool (`src/instructions/`) checks every step for
+floating, overlapping, and off-grid parts, then builds the PDF booklet and step
+images. A model with blocking findings is not rendered.
 
 The plugin packaging is in `.claude-plugin/`. Opening this repo directly in
 Claude Code is for development only; test the plugin with

@@ -39,11 +39,16 @@ list and the instructions from it, and render it with `render_model`.
 6. **Check.** Look at both images. Fix and re-render when a part floats, overlaps
    another part, faces the wrong way, or does not connect. Compare the returned
    tally with your intended parts list; the tally is what the file actually contains.
-7. **Refine.** Review the images against "Detail baseline" as a critic would. If the
+7. **Instruction booklet.** Call `render_instructions` with the absolute path of the
+   `.ldr` file. It checks every step for floating, overlapping, and off-grid parts, then
+   writes `<name>-instructions.pdf` and `<name>-step-NN.png` next to the model (or in
+   `outDir`). See "Instruction booklet" below for how to act on the result.
+8. **Refine.** Review the images against "Detail baseline" as a critic would. If the
    model looks blocky, flat, or pixelated, or if it misses a feature from your plan,
    add detail and render again. Do at least one refinement pass before you deliver.
-8. **Deliver.** Write `<name>.md` with the parts list and the instructions, show the
-   user the images, and give the paths of the `.ldr`, `.md`, and PNG files.
+9. **Deliver.** Write `<name>.md` with the parts list and the instructions, show the
+   user the images, and give the paths of the `.ldr`, `.md`, `-instructions.pdf`, and
+   PNG files.
 
 ## Detail baseline
 
@@ -99,24 +104,51 @@ A part placement is one line:
   color id. The `render_model` tally names each code from LDraw's own color table, so
   check that the names match the colors you chose.
 - **Steps:** put `0 STEP` after each group of parts that makes one build step.
-  Each step adds parts that attach to what is already built.
+  Each step adds parts that attach to what is already built. Keep a step to 8 added
+  parts or fewer.
+- **Step text:** put one `0 // <sentence>` line inside each step. It becomes that step's
+  text in the `.md` file.
+- **View:** `0 ROTSTEP <x> <y> <z> ABS` turns the camera for the steps after it, and
+  `0 ROTSTEP END` returns to the default view.
 - **Header:** start the file with `0 <Model title>`, `0 Name: <name>.ldr`, and
   `0 Author: brick-art`.
 
 Large models can split into submodels: write each one as its own `.ldr` file in the
 same folder and place it with a type 1 line like a part. `render_model` reads them
-from the model's folder.
+from the model's folder. A submodel of 8 parts or fewer appears in the booklet as a
+callout box beside the step that uses it. A larger submodel gets its own numbered
+section, and each color it is placed in gets its own section.
 
 ## Parts list
 
 One row per part and color: quantity, part number, part name, color name, and
 size. The totals must match the `render_model` tally.
 
+## Instruction booklet
+
+`render_instructions` returns `status`, `checked`, `pdf`, `steps`, `findings`,
+`accepted`, and `totalParts`.
+
+- **Blocked.** Findings of kind `floating`, `overlap`, and `off-grid` block the build.
+  The status is `blocked` and no PDF is written. Fix each one in the `.ldr` file and run
+  the tool again.
+- **Accepting a part.** Put `0 !BRICKART CONNECTED` on the line before a part to accept
+  it. Put it before a submodel reference to accept that whole group. Use it only after
+  you check in the render that the part really attaches, and tell the user which parts
+  you accepted (the `accepted` list names them).
+- **Non-blocking findings.** `unverified` means a connection could not be checked: no
+  connection data, a possible overlap, contact with a part that has no data, or a part
+  hidden from the camera. `large-step` means a step adds more than 8 parts or is too
+  crowded for one page. Report both kinds to the user, and split large steps when you can.
+- **Unchecked.** When `checked` is `false`, the parts database was not available and
+  no connections were checked. Tell the user.
+
 ## Instructions
 
-Number the steps to match the `0 STEP` groups in the `.ldr` file. For each step,
-list the parts it adds and say where each one goes, relative to parts already
-placed.
+Generate the instruction section of `<name>.md` from the `steps` the tool returns. For
+each step, write its number, its `text`, the embedded image `<name>-step-NN.png`, and
+its `parts`. Group steps by `section`. The deliverables include
+`<name>-instructions.pdf`.
 
 ## If rendering fails
 
