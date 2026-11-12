@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, test } from 'node:test';
+import { bookletHtml } from '../../src/instructions/booklet-html.ts';
+import { layoutBooklet } from '../../src/instructions/layout.ts';
+import { calloutShotName, iconShotName, stepDigits, stepShotName, type ShotResult } from '../../src/instructions/render-steps.ts';
+import type { StepModel } from '../../src/instructions/steps.ts';
+import { findBrowser } from '../../src/render/browser.ts';
+import { printToPdf } from '../../src/render/pdf.ts';
+import { fakeModel, fakeStep, section } from '../helpers/fake-steps.ts';
+
+const dirs: string[] = [];
+after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+const browser = findBrowser();
+const noBrowser = browser === null ? 'no Chromium-based browser installed' : false;
+
+function shotsFor(model: StepModel): Map<string, ShotResult> {
+  const shots = new Map<string, ShotResult>();
+  const add = (name: string, marks: [number, number][] = []) => shots.set(name, { name, png: `/tmp/x/${name}.png`, marks, hiddenParts: [] });
+  const digits = stepDigits(model);
+  for (const s of model.sections) {
+    for (const step of s.steps) {
+      add(stepShotName(step.number, digits), step.callouts.flatMap((c) => c.attach.map((): [number, number] => [700, 500])));
+      step.callouts.forEach((c, ci) => c.miniSteps.forEach((_, mi) => add(calloutShotName(step.number, digits, ci + 1, mi + 1))));
+    }
+  }
+  for (const p of model.parts) add(iconShotName(p.part, p.color));
+  return shots;
+}
+const names = new Map([[4, 'Red <b>']]);
+const build = (model: StepModel, checked = true) =>
+  bookletHtml({ model, pages: layoutBooklet(model), shots: shotsFor(model), checked, colorNames: names });
+
+test('bookletHtml has every step number and no step text', () => {
+  const steps = Array.from({ length: 8 }, (_, i) => fakeStep(i + 1, { callouts: i === 2 ? 1 : 0 }));
+  steps[0]!.text = 'secret instruction';
+  const model = fakeModel([section('test', steps)]);
+  const html = build(model);
+  for (let n = 1; n <= 8; n++) assert.ok(html.includes(`>${n}<`), `step ${n}`);
+  assert.ok(!html.includes('0 //'));
+  assert.ok(!html.includes('secret instruction'));
+  assert.ok(!/lego/i.test(html));
+});
+
+test('connections not checked appears only when unchecked', () => {
+  const model = fakeModel([section('test', [fakeStep(1)])]);
+  assert.ok(!build(model, true).includes('connections not checked'));
+  assert.ok(build(model, false).includes('connections not checked'));
+});
+
+test('bookletHtml escapes model text and colour names', () => {
+  const model = fakeModel([section('test', [fakeStep(1)])]);
+  model.title = '<script>alert(1)</script>';
+  const html = build(model);
+  assert.ok(!html.includes('<script>alert'));
+  assert.ok(!html.includes('Red <b>'));
+  assert.ok(html.includes('Red &lt;b&gt;'));
+});
+
+test('parts page totals match the model', () => {
+  const model = fakeModel([section('test', [fakeStep(1)])], 30);
+  model.parts.forEach((p, i) => { p.count = i + 2; });
+  model.totalParts = model.parts.reduce((n, p) => n + p.count, 0);
+  const html = build(model);
+  const pagesHtml = html.split('<section').filter((s) => s.includes('class="page parts"'));
+  assert.equal(pagesHtml.length, 2);
+  const sum = pagesHtml.join('').match(/class="qty">(\d+)x</g)!.reduce((n, m) => n + Number(/(\d+)x/.exec(m)![1]), 0);
+  assert.equal(sum, model.totalParts);
+});
+
+test('callouts get an arrow to the attach mark and an Nx label', () => {
+  const step = fakeStep(1, { callouts: 1 });
+  step.callouts[0]!.quantity = 2;
+  const html = build(fakeModel([section('test', [step])]));
+  assert.match(html, /<line [^>]*class="arrow"/);
+  assert.ok(html.includes('>2x<'));
+});
+
+test('printToPdf writes a PDF', { skip: noBrowser, timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pdf-'));
+  dirs.push(dir);
+  writeFileSync(join(dir, 'a.html'), '<!doctype html><title>t</title><p>hello');
+  await printToPdf({ htmlPath: join(dir, 'a.html'), pdfPath: join(dir, 'a.pdf'), browser: browser! });
+  assert.equal(readFileSync(join(dir, 'a.pdf')).subarray(0, 4).toString(), '%PDF');
+});
