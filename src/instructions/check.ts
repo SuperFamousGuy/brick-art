@@ -14,6 +14,7 @@ export interface Finding {
 export interface CheckResult { findings: Finding[]; accepted: Placement[]; blocked: boolean }
 export const POS_TOLERANCE = 0.5;   // LDU
 const LARGE_STEP = 8;
+const OVERLAP_SHARE = 0.5;          // shared cells / smaller part's cells for a blocking overlap
 const OFF_GRID_REACH = 20;          // LDU, lateral reach of an off-grid near miss
 const PARALLEL = 0.99;
 const CELL: Vec3 = [20, 8, 20];
@@ -21,7 +22,12 @@ const CELL: Vec3 = [20, 8, 20];
 interface Box { min: Vec3; max: Vec3 }
 interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3 }
 /** A placement with its geometry resolved into the checking frame. */
-interface Placed { p: Placement; geom: PartGeom | null; conns: Conn[] | null; box: Box | null; cells?: Box[] }
+interface Placed {
+  p: Placement; geom: PartGeom | null; conns: Conn[] | null;
+  box: Box | null;   // world AABB shrunk by POS_TOLERANCE, null without geometry
+  hull: Box;         // world AABB, or the origin point without geometry
+  cells?: Box[];
+}
 
 const BLOCKING: Record<FindingKind, boolean> = {
   floating: true, overlap: true, 'off-grid': true, unverified: false, 'large-step': false,
@@ -84,6 +90,7 @@ function resolve(p: Placement, geom: GeometrySource): Placed {
     p, geom: g,
     conns: g?.connections?.map((c) => ({ type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction) })) ?? null,
     box: g ? shrink(worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max)) : null,
+    hull: g ? worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max) : { min: p.pos, max: p.pos },
   };
 }
 
@@ -148,14 +155,29 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
   const anyConn = (q: Placed, index: SpatialHash<Conn>, r: number, test: (a: Conn, b: Conn) => boolean) =>
     q.conns!.some((a) => index.query(around(a.pos, r)).some((b) => test(a, b)));
 
-  /** One overlap/unverified finding per colliding pair. */
-  const overlap = (q: Placed, o: Placed): 'overlap' | 'unverified' | null => {
-    if (!q.box || !o.box || !intersects(q.box, o.box)) return null;
-    if (!q.geom!.grid || !o.geom!.grid || !axisAligned(q.p.rot) || !axisAligned(o.p.rot)) return 'unverified';
-    const theirs = cellBoxes(o).filter((b) => intersects(b, q.box!));
-    if (theirs.length === 0) return null;
-    return cellBoxes(q).some((a) => theirs.some((b) => intersects(a, b))) ? 'overlap' : null;
+  /** True when the two parts mate through a compatible connection with each other. */
+  const mated = (q: Placed, o: Placed) => !!q.conns && !!o.conns && q.conns.some((a) => o.conns!.some((b) => touching(a, b)));
+
+  /**
+   * Classifies one colliding pair. Parts that mate with each other are exempt. With grids, a blocking
+   * overlap needs the shared cells to cover OVERLAP_SHARE of the smaller part's filled cells.
+   */
+  const overlap = (q: Placed, o: Placed): 'overlap' | 'possible' | 'unchecked' | null => {
+    if (!q.box || !o.box || !intersects(q.box, o.box) || mated(q, o)) return null;
+    if (!q.geom!.grid || !o.geom!.grid || !axisAligned(q.p.rot) || !axisAligned(o.p.rot)) return 'unchecked';
+    const mine = cellBoxes(q);
+    const theirs = cellBoxes(o);
+    const [small, large] = mine.length <= theirs.length ? [mine, theirs] : [theirs, mine];
+    const near = large.filter((b) => intersects(b, q.box!) && intersects(b, o.box!));
+    const shared = small.filter((a) => near.some((b) => intersects(a, b))).length;
+    if (shared === 0) return null;
+    return shared >= OVERLAP_SHARE * small.length ? 'overlap' : 'possible';
   };
+  /** Touch or intersect within POS_TOLERANCE. */
+  const touches = (a: Box, b: Box) =>
+    a.min[0] <= b.max[0] + POS_TOLERANCE && b.min[0] <= a.max[0] + POS_TOLERANCE &&
+    a.min[1] <= b.max[1] + POS_TOLERANCE && b.min[1] <= a.max[1] + POS_TOLERANCE &&
+    a.min[2] <= b.max[2] + POS_TOLERANCE && b.min[2] <= a.max[2] + POS_TOLERANCE;
 
   /**
    * Checks one sequence of steps in one frame. Each step is a list of units; a unit is a loose part
@@ -164,6 +186,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
   const checkSteps = (section: string, steps: StepUnits[], collect: Set<Placement>) => {
     const conns = new SpatialHash<Conn>(OFF_GRID_REACH);   // connection points of placed parts
     const solids = new SpatialHash<Placed>(40);            // boxes of parts already overlap-checked
+    const contacts = new SpatialHash<Placed>(40);          // placed parts without connection data
     let anchored = false;
     for (const step of steps) {
       if (step.size > LARGE_STEP) {
@@ -182,7 +205,8 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
           for (const o of solids.query(q.box)) {
             const kind = overlap(q, o);
             if (kind === 'overlap') report('overlap', section, step.number, q.p, `overlaps ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}`);
-            if (kind === 'unverified') report('unverified', section, step.number, q.p, `may overlap ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, which could not be checked cell by cell`);
+            if (kind === 'possible') report('unverified', section, step.number, q.p, `has a possible overlap with ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, sharing less than half the smaller part's grid cells`);
+            if (kind === 'unchecked') report('unverified', section, step.number, q.p, `has a possible overlap with ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, which could not be checked cell by cell`);
           }
         }
         for (const q of u.members) if (q.box) solids.add(q, q.box);
@@ -191,7 +215,18 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
       // Connection: iterate to a fixpoint so same-step chains reach the model.
       const checkable = (q: Placed) => !q.p.accepted && q.conns !== null;
       const placeUnit = (u: (typeof units)[number]) => {
-        for (const q of u.members) for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
+        for (const q of u.members) {
+          for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
+          if (!q.conns) contacts.add(q, q.hull);
+        }
+      };
+      const grown = (b: Box): Box => ({ min: b.min.map((v) => v - POS_TOLERANCE) as Vec3, max: b.max.map((v) => v + POS_TOLERANCE) as Vec3 });
+      const contactOf = (u: (typeof units)[number]) => {
+        for (const q of u.members.filter(checkable)) {
+          const hit = contacts.query(grown(q.hull)).find((o) => touches(q.hull, o.hull));
+          if (hit) return { q, hit };
+        }
+        return null;
       };
       let pending: typeof units = [];
       for (const u of units) {
@@ -201,15 +236,27 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         anchored = true;
         if (free) placeUnit(u); else pending.push(u);
       }
-      let progress = true;
-      while (progress && pending.length > 0) {
-        progress = false;
-        pending = pending.filter((u) => {
-          if (!u.members.filter(checkable).some((q) => anyConn(q, conns, POS_TOLERANCE, touching))) return true;
+      // Real connections first; a unit that only rests against a part without connection data
+      // is placed as unverified, and the connection fixpoint then resumes from it.
+      for (;;) {
+        let progress = true;
+        while (progress && pending.length > 0) {
+          progress = false;
+          pending = pending.filter((u) => {
+            if (!u.members.filter(checkable).some((q) => anyConn(q, conns, POS_TOLERANCE, touching))) return true;
+            placeUnit(u);
+            progress = true;
+            return false;
+          });
+        }
+        const rescued = pending.map((u) => ({ u, c: contactOf(u) })).filter((x) => x.c);
+        if (rescued.length === 0) break;
+        for (const { u, c } of rescued) {
+          report('unverified', section, step.number, c!.q.p,
+            `${step.label(u.i)}does not connect through known connection points but touches ${c!.hit.p.part} (color ${c!.hit.p.color}) at ${fmt(c!.hit.p.pos)}, which has no connection data`);
           placeUnit(u);
-          progress = true;
-          return false;
-        });
+        }
+        pending = pending.filter((u) => !rescued.some((x) => x.u === u));
       }
       for (const u of pending) {
         const members = u.members.filter(checkable);
@@ -236,7 +283,9 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
           offset += n;
         }
       }
-      return { number: step.number, units, size: step.added.length, label: (u: number) => labels[u]! };
+      // Inserted sections were checked in their own steps, so they don't count toward a large step.
+      const size = step.loose.length + step.callouts.reduce((n, c) => n + c.instances.flat().length, 0);
+      return { number: step.number, units, size, label: (u: number) => labels[u]! };
     });
     // Accepted parts are collected from loose parts and callout instances only, so each
     // build instruction counts once (inserts repeat a section already collected on its own).

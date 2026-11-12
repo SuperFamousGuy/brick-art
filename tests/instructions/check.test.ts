@@ -18,8 +18,12 @@ const BOX: PartGeom = {
     { type: 'stud_receptor', position: [0, 24, 0], direction: [0, -1, 0] },
   ],
 };
+// Bounds include the stud, like real LDraw parts, so stacked copies share one grid layer.
+const STUDDED: PartGeom = { ...BOX, bounds: { min: [-10, -4, -10], max: [10, 24, 10] }, grid: [[[1]], [[1]], [[1]], [[1]]] };
+const BLOB: PartGeom = { ...BOX, connections: null };
+const PARTS: Record<string, PartGeom> = { 'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB };
 const geom: GeometrySource = {
-  get: (f) => (f === 'box.dat' ? BOX : null),
+  get: (f) => PARTS[f] ?? null,
   compatible: (a, b) => (a === 'stud' && b === 'stud_receptor') || (a === 'stud_receptor' && b === 'stud'),
 };
 
@@ -137,11 +141,48 @@ test('section steps are checked locally and the insert as a group', () => {
     'model.ldr': [box(), '0 STEP', '1 4 0 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr'],
     'tower.ldr': tower,
   });
-  // The insert step adds all 9 tower parts, so it warns as a large step (added.length > 8).
-  assert.deepEqual(r.findings.map((f) => [f.kind, f.section]), [['large-step', 'model']]);
+  assert.deepEqual(r.findings, []);
   const bad = check({
     'model.ldr': [box(), '0 STEP', '1 4 0 -500 0 1 0 0 0 1 0 0 0 1 tower.ldr'],
     'tower.ldr': tower,
   });
-  assert.deepEqual(bad.findings.map((f) => [f.kind, f.section]).filter(([k]) => k !== 'large-step'), [['floating', 'model']]);
+  assert.deepEqual(bad.findings.map((f) => [f.kind, f.section]), [['floating', 'model']]);
+});
+
+test('inserted section parts do not count toward a large step', () => {
+  const tower = Array.from({ length: 9 }, (_, i) => [box(0, -24 * i), '0 STEP']).flat();
+  const r = check({
+    'model.ldr': [box(), '0 STEP', '1 4 0 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr', box(0, -240)],
+    'tower.ldr': tower,
+  });
+  assert.deepEqual(r.findings, []);
+});
+
+test('parts that mate with each other are exempt from overlap', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'studded.dat'), '0 STEP', box(0, -24, 0, undefined, 'studded.dat')] });
+  assert.deepEqual(r.findings, []);
+});
+
+test('a small shared volume is a possible overlap, not blocking', () => {
+  const r = two(box(0, -16));
+  assert.ok(!r.findings.some((f) => f.kind === 'overlap'), JSON.stringify(r.findings));
+  const possible = r.findings.filter((f) => f.kind === 'unverified' && /possible overlap/.test(f.message));
+  assert.equal(possible.length, 1);
+  assert.equal(possible[0]!.blocking, false);
+  assert.equal(possible[0]!.step, 2);
+});
+
+test('a part resting on an unknown part is unverified, not floating', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'mystery.dat'), '0 STEP', box(0, -24), '0 STEP', box(0, -48)] });
+  assert.ok(!r.findings.some((f) => f.kind === 'floating'), JSON.stringify(r.findings));
+  assert.deepEqual(r.findings.filter((f) => f.step === 2).map((f) => f.kind), ['unverified']);
+  assert.deepEqual(r.findings.filter((f) => f.step === 3), []);
+  assert.equal(r.blocked, false);
+});
+
+test('a part resting on a part without connections is unverified, not floating', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'blob.dat'), '0 STEP', box(0, -24)] });
+  assert.deepEqual(r.findings.map((f) => [f.kind, f.step]), [['unverified', 1], ['unverified', 2]]);
+  assert.match(r.findings[1]!.message, /touches blob\.dat/);
+  assert.equal(r.blocked, false);
 });
