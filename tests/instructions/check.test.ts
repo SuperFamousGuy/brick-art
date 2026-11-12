@@ -29,10 +29,20 @@ const OUTWARD: PartGeom = {
     { type: 'stud_receptor', position: [0, 24, 0], direction: [0, 1, 0] },
   ],
 };
-const PARTS: Record<string, PartGeom> = { 'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB, 'outward.dat': OUTWARD };
+// Centred axial mate, like LDCad center=true snaps: each connection point sits on its part's own midplane.
+const HOLED: PartGeom = { ...BOX, connections: [{ type: 'pin_hole', position: [0, 10, 0], direction: [0, 0, -1] }] };
+const PIN: PartGeom = {
+  bounds: { min: [-4, -4, -20], max: [4, 4, 20] },
+  grid: [[[1], [1]]],
+  connections: [{ type: 'pin', position: [0, 0, 0], direction: [0, 0, 1] }],
+};
+const PARTS: Record<string, PartGeom> = {
+  'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB, 'outward.dat': OUTWARD, 'holed.dat': HOLED, 'pin.dat': PIN,
+};
+const MATES = new Set(['stud|stud_receptor', 'stud_receptor|stud', 'pin|pin_hole', 'pin_hole|pin']);
 const geom: GeometrySource = {
   get: (f) => PARTS[f] ?? null,
-  compatible: (a, b) => (a === 'stud' && b === 'stud_receptor') || (a === 'stud_receptor' && b === 'stud'),
+  compatible: (a, b) => MATES.has(`${a}|${b}`),
 };
 
 const ROT_Y = '0 0 1 0 1 0 -1 0 0';
@@ -224,4 +234,10 @@ test('mating exemption works with outward-pointing (anti-parallel) connection da
   assert.deepEqual(ok.findings, []);
   const flipped = check({ 'model.ldr': [box(0, 0, 0, undefined, 'outward.dat'), '0 STEP', box(0, 24, 0, '1 0 0 0 -1 0 0 0 -1', 'outward.dat')] });
   assert.ok(flipped.findings.some((f) => f.kind === 'overlap' && f.blocking), JSON.stringify(flipped.findings));
+});
+
+test('a centred axial mate (pin in a hole) is exempt from overlap', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'holed.dat'), '0 STEP', box(0, 10, 0, undefined, 'pin.dat')] });
+  assert.ok(!r.findings.some((f) => f.blocking), JSON.stringify(r.findings));
+  assert.deepEqual(r.findings, []);
 });

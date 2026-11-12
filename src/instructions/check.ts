@@ -17,6 +17,7 @@ const LARGE_STEP = 8;
 const OVERLAP_SHARE = 0.5;          // shared cells / smaller part's cells for a blocking overlap
 const OFF_GRID_REACH = 20;          // LDU, lateral reach of an off-grid near miss
 const PARALLEL = 0.99;
+const SAME_SIDE_EPS = 1e-6;          // LDU², centre-side product above this = same side of a mate
 const CELL: Vec3 = [20, 8, 20];
 
 interface Box { min: Vec3; max: Vec3 }
@@ -166,11 +167,13 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
    * True when the two parts mate through a compatible connection with each other: the points touch,
    * and the parts sit on opposite sides of the connection plane. The side test rejects a part turned
    * over into its mate, and works whether the data's mating directions are parallel or anti-parallel
-   * (the parts DB points studs and receptors outward, so a real mate is anti-parallel).
+   * (the parts DB points studs and receptors outward, so a real mate is anti-parallel). Only both
+   * centres strictly on the same side rejects a mate: centred axial snaps (pins, axles, bars) put the
+   * point on a part's midplane, so a product of about 0 still counts as mated.
    */
   const center = (b: Box): Vec3 => [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
   const mated = (q: Placed, o: Placed) => !!q.conns && !!o.conns && q.conns.some((a) => o.conns!.some((b) =>
-    touching(a, b) && dot(sub(center(q.hull), a.pos), a.dir) * dot(sub(center(o.hull), a.pos), a.dir) < 0));
+    touching(a, b) && dot(sub(center(q.hull), a.pos), a.dir) * dot(sub(center(o.hull), a.pos), a.dir) <= SAME_SIDE_EPS));
 
   /**
    * Classifies one colliding pair. Parts that mate with each other are exempt. With grids, a blocking
