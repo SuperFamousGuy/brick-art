@@ -1,0 +1,258 @@
+import type { ConnectionType, Mat3, Vec3 } from '../types.ts';
+import type { GeometrySource, PartGeom } from './geometry.ts';
+import type { Placement, StepModel } from './steps.ts';
+
+export type FindingKind = 'floating' | 'overlap' | 'off-grid' | 'unverified' | 'large-step';
+export interface Finding {
+  kind: FindingKind;
+  blocking: boolean;          // true for floating, overlap, off-grid
+  section: string; step: number;
+  part: string; color: number; pos: Vec3;
+  source: { file: string; line: number };
+  message: string;            // one sentence naming the step, part, color, and position
+}
+export interface CheckResult { findings: Finding[]; accepted: Placement[]; blocked: boolean }
+export const POS_TOLERANCE = 0.5;   // LDU
+const LARGE_STEP = 8;
+const OFF_GRID_REACH = 20;          // LDU, lateral reach of an off-grid near miss
+const PARALLEL = 0.99;
+const CELL: Vec3 = [20, 8, 20];
+
+interface Box { min: Vec3; max: Vec3 }
+interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3 }
+/** A placement with its geometry resolved into the checking frame. */
+interface Placed { p: Placement; geom: PartGeom | null; conns: Conn[] | null; box: Box | null; cells?: Box[] }
+
+const BLOCKING: Record<FindingKind, boolean> = {
+  floating: true, overlap: true, 'off-grid': true, unverified: false, 'large-step': false,
+};
+
+function apply(rot: Mat3, pos: Vec3, v: Vec3): Vec3 {
+  return [
+    rot[0] * v[0] + rot[1] * v[1] + rot[2] * v[2] + pos[0],
+    rot[3] * v[0] + rot[4] * v[1] + rot[5] * v[2] + pos[1],
+    rot[6] * v[0] + rot[7] * v[1] + rot[8] * v[2] + pos[2],
+  ];
+}
+const turn = (rot: Mat3, v: Vec3): Vec3 => apply(rot, [0, 0, 0], v);
+const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const norm = (a: Vec3) => Math.sqrt(dot(a, a));
+const parallel = (a: Vec3, b: Vec3) => {
+  const n = norm(a) * norm(b);
+  return n > 0 && Math.abs(dot(a, b)) / n > PARALLEL;
+};
+
+/** The world AABB of the part-local box `min..max` under `rot`/`pos`. */
+function worldBox(rot: Mat3, pos: Vec3, min: Vec3, max: Vec3): Box {
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < 8; i++) {
+    const c = apply(rot, pos, [i & 1 ? max[0] : min[0], i & 2 ? max[1] : min[1], i & 4 ? max[2] : min[2]]);
+    for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k]!, c[k]!); hi[k] = Math.max(hi[k]!, c[k]!); }
+  }
+  return { min: lo, max: hi };
+}
+const shrink = (b: Box): Box => ({
+  min: b.min.map((v) => v + POS_TOLERANCE) as Vec3,
+  max: b.max.map((v) => v - POS_TOLERANCE) as Vec3,
+});
+const intersects = (a: Box, b: Box) =>
+  a.min[0] < b.max[0] && b.min[0] < a.max[0] &&
+  a.min[1] < b.max[1] && b.min[1] < a.max[1] &&
+  a.min[2] < b.max[2] && b.min[2] < a.max[2];
+const axisAligned = (rot: Mat3) => rot.every((v) => Math.abs(v) < 1e-6 || Math.abs(Math.abs(v) - 1) < 1e-6);
+
+/** Shrunk world boxes of every filled grid cell. */
+function cellBoxes(q: Placed): Box[] {
+  if (q.cells) return q.cells;
+  const { grid, bounds } = q.geom!;
+  const out: Box[] = [];
+  grid!.forEach((layer, y) => layer.forEach((row, z) => row.forEach((filled, x) => {
+    if (!filled) return;
+    const min: Vec3 = [bounds.min[0] + x * CELL[0], bounds.min[1] + y * CELL[1], bounds.min[2] + z * CELL[2]];
+    const max: Vec3 = [min[0] + CELL[0], min[1] + CELL[1], min[2] + CELL[2]];
+    out.push(shrink(worldBox(q.p.rot, q.p.pos, min, max)));
+  })));
+  q.cells = out;
+  return out;
+}
+
+function resolve(p: Placement, geom: GeometrySource): Placed {
+  const g = geom.get(p.part);
+  return {
+    p, geom: g,
+    conns: g?.connections?.map((c) => ({ type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction) })) ?? null,
+    box: g ? shrink(worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max)) : null,
+  };
+}
+
+interface StepUnits { number: number; units: Placement[][]; size: number; label: (unit: number) => string }
+
+/** Buckets items by the grid cells their box touches, for neighbourhood queries. */
+class SpatialHash<T> {
+  private cells = new Map<string, T[]>();
+  private size: number;
+  constructor(size: number) { this.size = size; }
+  private keys(b: Box): string[] {
+    const lo = b.min.map((v) => Math.floor(v / this.size));
+    const hi = b.max.map((v) => Math.floor(v / this.size));
+    const out: string[] = [];
+    for (let x = lo[0]!; x <= hi[0]!; x++) for (let y = lo[1]!; y <= hi[1]!; y++) for (let z = lo[2]!; z <= hi[2]!; z++) out.push(`${x},${y},${z}`);
+    return out;
+  }
+  add(item: T, b: Box) {
+    for (const k of this.keys(b)) {
+      const list = this.cells.get(k);
+      if (list) list.push(item); else this.cells.set(k, [item]);
+    }
+  }
+  /** Every item whose box shares a cell with `b`, each once. */
+  query(b: Box): T[] {
+    const seen = new Set<T>();
+    for (const k of this.keys(b)) for (const item of this.cells.get(k) ?? []) seen.add(item);
+    return [...seen];
+  }
+}
+
+const fmt = (v: Vec3) => `(${v.map((n) => Math.round(n * 100) / 100).join(', ')})`;
+
+/**
+ * Checks every build step: each new part (or callout / insert group) must connect to the model
+ * built so far, must not overlap it, and must sit on the stud grid.
+ */
+export function checkModel(model: StepModel, geom: GeometrySource): CheckResult {
+  const findings: Finding[] = [];
+  const accepted: Placement[] = [];
+  const checkedCallouts = new Set<string>();
+
+  const report = (kind: FindingKind, section: string, step: number, p: Placement, what: string) => {
+    findings.push({
+      kind, blocking: BLOCKING[kind], section, step, part: p.part, color: p.color, pos: p.pos, source: p.source,
+      message: `Step ${step}: ${p.part} (color ${p.color}) at ${fmt(p.pos)} ${what}.`,
+    });
+  };
+
+  const compatibleTouch = (a: Conn, b: Conn) => geom.compatible(a.type, b.type);
+  const touching = (a: Conn, b: Conn) =>
+    compatibleTouch(a, b) && norm(sub(a.pos, b.pos)) <= POS_TOLERANCE && parallel(a.dir, b.dir);
+  const nearby = (a: Conn, b: Conn) => {
+    if (!compatibleTouch(a, b) || !parallel(a.dir, b.dir)) return false;
+    const d = sub(a.pos, b.pos);
+    const axis = b.dir.map((v) => v / norm(b.dir)) as Vec3;
+    const along = dot(d, axis);
+    const lateral = norm(sub(d, axis.map((v) => v * along) as Vec3));
+    return Math.abs(along) <= POS_TOLERANCE && lateral < OFF_GRID_REACH;
+  };
+  const around = (v: Vec3, r: number): Box => ({ min: v.map((n) => n - r) as Vec3, max: v.map((n) => n + r) as Vec3 });
+  const anyConn = (q: Placed, index: SpatialHash<Conn>, r: number, test: (a: Conn, b: Conn) => boolean) =>
+    q.conns!.some((a) => index.query(around(a.pos, r)).some((b) => test(a, b)));
+
+  /** One overlap/unverified finding per colliding pair. */
+  const overlap = (q: Placed, o: Placed): 'overlap' | 'unverified' | null => {
+    if (!q.box || !o.box || !intersects(q.box, o.box)) return null;
+    if (!q.geom!.grid || !o.geom!.grid || !axisAligned(q.p.rot) || !axisAligned(o.p.rot)) return 'unverified';
+    const theirs = cellBoxes(o).filter((b) => intersects(b, q.box!));
+    if (theirs.length === 0) return null;
+    return cellBoxes(q).some((a) => theirs.some((b) => intersects(a, b))) ? 'overlap' : null;
+  };
+
+  /**
+   * Checks one sequence of steps in one frame. Each step is a list of units; a unit is a loose part
+   * or one callout / insert instance, which passes when any member connects.
+   */
+  const checkSteps = (section: string, steps: StepUnits[], collect: Set<Placement>) => {
+    const conns = new SpatialHash<Conn>(OFF_GRID_REACH);   // connection points of placed parts
+    const solids = new SpatialHash<Placed>(40);            // boxes of parts already overlap-checked
+    let anchored = false;
+    for (const step of steps) {
+      if (step.size > LARGE_STEP) {
+        const first = step.units[0]![0]!;
+        report('large-step', section, step.number, first, `starts a step that adds ${step.size} parts (more than ${LARGE_STEP})`);
+      }
+      const units = step.units.map((parts, i) => ({ i, members: parts.map((p) => resolve(p, geom)) }));
+
+      // Per-part checks: accepted, unverified, and overlap with everything placed earlier,
+      // including earlier units of this step (but not members of the same unit).
+      for (const u of units) {
+        for (const q of u.members) {
+          if (q.p.accepted) { if (collect.has(q.p)) accepted.push(q.p); continue; }
+          if (!q.geom || !q.geom.connections) report('unverified', section, step.number, q.p, 'has no connection data, so its connection was not checked');
+          if (!q.box) continue;
+          for (const o of solids.query(q.box)) {
+            const kind = overlap(q, o);
+            if (kind === 'overlap') report('overlap', section, step.number, q.p, `overlaps ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}`);
+            if (kind === 'unverified') report('unverified', section, step.number, q.p, `may overlap ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, which could not be checked cell by cell`);
+          }
+        }
+        for (const q of u.members) if (q.box) solids.add(q, q.box);
+      }
+
+      // Connection: iterate to a fixpoint so same-step chains reach the model.
+      const checkable = (q: Placed) => !q.p.accepted && q.conns !== null;
+      const placeUnit = (u: (typeof units)[number]) => {
+        for (const q of u.members) for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
+      };
+      let pending: typeof units = [];
+      for (const u of units) {
+        const free = !anchored                                  // the anchor
+          || u.members.some((q) => q.p.accepted)                // declared connected
+          || !u.members.some(checkable);                        // nothing to verify
+        anchored = true;
+        if (free) placeUnit(u); else pending.push(u);
+      }
+      let progress = true;
+      while (progress && pending.length > 0) {
+        progress = false;
+        pending = pending.filter((u) => {
+          if (!u.members.filter(checkable).some((q) => anyConn(q, conns, POS_TOLERANCE, touching))) return true;
+          placeUnit(u);
+          progress = true;
+          return false;
+        });
+      }
+      for (const u of pending) {
+        const members = u.members.filter(checkable);
+        const near = members.some((q) => anyConn(q, conns, OFF_GRID_REACH, nearby));
+        const label = step.label(u.i);
+        report(near ? 'off-grid' : 'floating', section, step.number, members[0]!.p,
+          near ? `${label}is off the stud grid by less than one stud` : `${label}does not connect to the model`);
+      }
+      for (const u of pending) placeUnit(u);
+    }
+  };
+
+  for (const section of model.sections) {
+    const steps = section.steps.map((step) => {
+      const units: Placement[][] = step.loose.map((p) => [p]);
+      const labels: string[] = step.loose.map(() => '');
+      for (const c of step.callouts) for (const inst of c.instances) { units.push(inst); labels.push(`(in callout ${c.file}) `); }
+      let offset = step.loose.length + step.callouts.reduce((n, c) => n + c.instances.flat().length, 0);
+      for (const ins of step.inserts) {
+        const n = ins.parts.length;
+        for (let k = 0; k < ins.quantity; k++) {
+          units.push(step.added.slice(offset, offset + n));
+          labels.push(`(in sub-assembly ${ins.sectionId}) `);
+          offset += n;
+        }
+      }
+      return { number: step.number, units, size: step.added.length, label: (u: number) => labels[u]! };
+    });
+    // Accepted parts are collected from loose parts and callout instances only, so each
+    // build instruction counts once (inserts repeat a section already collected on its own).
+    const collectable = new Set(section.steps.flatMap((s) => [...s.loose, ...s.callouts.flatMap((c) => c.instances.flat())]));
+    checkSteps(section.id, steps, collectable);
+
+    // Callout mini-steps, in the submodel's local frame, once per submodel file.
+    for (const step of section.steps) {
+      for (const c of step.callouts) {
+        if (checkedCallouts.has(c.file)) continue;
+        checkedCallouts.add(c.file);
+        checkSteps(section.id, c.miniSteps.map((parts) => ({
+          number: step.number, units: parts.map((p) => [p]), size: 0, label: () => `(in callout ${c.file}) `,
+        })), new Set());
+      }
+    }
+  }
+  return { findings, accepted, blocked: findings.some((f) => f.blocking) };
+}
