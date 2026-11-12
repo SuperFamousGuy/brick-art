@@ -19,7 +19,7 @@ export function ldrawColorNames(library: ZipIndex): Map<number, string> {
 }
 
 /** Splits an MPD into its named files; a plain LDR is one unnamed file. */
-function splitMpd(text: string): { main: string[]; files: Map<string, string[]> } {
+export function splitMpd(text: string): { main: string[]; files: Map<string, string[]> } {
   const files = new Map<string, string[]>();
   let current: string[] | null = null;
   let main: string[] | null = null;
