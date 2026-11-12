@@ -1,0 +1,252 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>brick-art instructions</title>
+<style>html,body{margin:0;background:#cfe6f5}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/"}}</script>
+</head>
+<body>
+<script type="module">
+// Instruction-manual render of flattened LDraw models: flat Lambert colors, dark LDraw edge and
+// conditional lines, light-blue background, no shadows, AO, or environment map. The Node side
+// (src/instructions/render-steps.ts) serves this page with a shot list in /job.json. For each
+// shot it posts /result/<name>.png and /result/<name>.json ({ marks, hiddenParts }).
+import * as THREE from 'three';
+import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
+
+const post = async (path, body) => {
+  const res = await fetch(path, { method: 'POST', body });
+  if (!res.ok) throw new Error(`POST ${path} failed: ${res.status} ${await res.text()}`);
+};
+const fail = (err) => fetch('/error', { method: 'POST', body: String(err && err.stack || err) });
+window.addEventListener('error', (e) => fail(e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => fail(e.reason));
+
+const job = await (await fetch('/job.json')).json();
+const PR = job.pixelRatio;
+const BG = 0xcfe6f5;
+const EDGE = 0x1b1b1b;
+const FOV = 24;
+const FILL = 0.8;
+const deg = THREE.MathUtils.degToRad;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(PR);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.NoToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const background = new THREE.Color(BG);
+const black = new THREE.Color(0, 0, 0);
+scene.background = background;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8c8c8c, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+scene.add(sun, sun.target);
+
+const loader = new LDrawLoader();
+loader.setPartsLibraryPath('/ldraw/');
+await loader.preloadMaterials('/ldraw/LDConfig.ldr');
+loader.smoothNormals = true;
+
+// Flat manual materials, one per loader material.
+const flat = new Map();
+const flatMaterial = (m) => {
+  let f = flat.get(m.uuid);
+  if (!f) {
+    f = new THREE.MeshLambertMaterial({
+      color: m.color ? m.color.clone() : new THREE.Color(0x888888),
+      transparent: m.transparent, opacity: m.opacity, side: m.side, depthWrite: m.depthWrite,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    });
+    flat.set(m.uuid, f);
+  }
+  return f;
+};
+
+/** Expected part file names per model, in placement order, read from the flattened .ldr. */
+const expectedParts = (text) => text.split('\n').filter((l) => l.startsWith('1 ')).map((l) => l.trim().split(/\s+/).slice(14).join(' ').toLowerCase());
+
+const models = new Map();
+async function loadModel(name) {
+  const cached = models.get(name);
+  if (cached) return cached;
+  const url = '/model/' + encodeURIComponent(name);
+  const text = await (await fetch(url)).text();
+  const parts = expectedParts(text);
+  const group = await loader.loadAsync(url);
+  // LDrawLoader adds one child group per type-1 line, in file order. It skips a part whose own
+  // subfile fails to load, and merges a primitive into one extra mesh, so the count alone can
+  // match while the order is off. Match each child to its placement by name as well.
+  const children = group.children;
+  const missing = [];
+  let j = 0;
+  for (const part of parts) {
+    const child = children[j];
+    if (child && child.name.toLowerCase().replace(/\\/g, '/').endsWith(part)) j++;
+    else missing.push(part);
+  }
+  if (children.length !== parts.length || missing.length > 0 || j !== children.length) {
+    throw new Error(`${name}: ${children.length} loaded objects for ${parts.length} placed parts; not loaded as a part: ${[...new Set(missing)].join(', ') || '(extra objects)'}`);
+  }
+  group.rotation.x = Math.PI; // LDraw is y-down
+  group.traverse((o) => {
+    if (o.isMesh) {
+      o.material = Array.isArray(o.material) ? o.material.map(flatMaterial) : flatMaterial(o.material);
+      o.userData.flat = o.material;
+      o.userData.transparent = (Array.isArray(o.material) ? o.material : [o.material]).every((m) => m.transparent);
+    } else if (o.isLineSegments) {
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m.isLDrawConditionalLineMaterial) m.uniforms.diffuse.value.set(EDGE);
+        else if (m.color) m.color.set(EDGE);
+      }
+    }
+  });
+  group.updateMatrixWorld(true);
+  const entry = { group, parts };
+  models.set(name, entry);
+  return entry;
+}
+
+const cam = new THREE.PerspectiveCamera(FOV, 1, 1, 1000);
+
+/** Camera position for a view of children [a, b) at aspect W/H, using page.html's fit loop. */
+function fit(entry, frame, view, W, H) {
+  const key = `${frame[0]},${frame[1]}|${view.yaw},${view.pitch}|${W}x${H}`;
+  const cachedFit = (entry.fits ??= new Map()).get(key);
+  if (cachedFit) return cachedFit;
+  const box = new THREE.Box3();
+  for (let i = frame[0]; i < frame[1]; i++) box.expandByObject(entry.group.children[i]);
+  if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(20, 20, 20));
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
+  const yaw = deg(view.yaw), pitch = deg(view.pitch);
+  const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+
+  const vHalf = deg(FOV / 2);
+  const hHalf = Math.atan(Math.tan(vHalf) * (W / H));
+  let dist = radius / Math.sin(Math.min(vHalf, hHalf));
+  const corners = [];
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  cam.aspect = W / H;
+  for (let i = 0; i < 6; i++) {
+    cam.position.copy(center).addScaledVector(dir, dist);
+    cam.lookAt(center);
+    cam.near = Math.max(dist - radius * 2, 0.5);
+    cam.far = dist + radius * 50;
+    cam.updateProjectionMatrix();
+    cam.updateMatrixWorld();
+    let extent = 0;
+    for (const c of corners) {
+      const p = c.clone().project(cam);
+      extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+    }
+    const near = Math.max(dist - radius, radius * 0.1);
+    dist = radius + near * (extent / FILL);
+  }
+  const result = { center, radius, dir, dist };
+  entry.fits.set(key, result);
+  return result;
+}
+
+function placeCamera(f, W, H) {
+  cam.aspect = W / H;
+  cam.position.copy(f.center).addScaledVector(f.dir, f.dist);
+  cam.lookAt(f.center);
+  cam.near = Math.max(f.dist - f.radius * 2, 0.5);
+  cam.far = f.dist + f.radius * 50;
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld();
+  // Light from the camera's upper left.
+  const flatDir = new THREE.Vector3(f.dir.x, 0, f.dir.z);
+  if (flatDir.lengthSq() < 1e-6) flatDir.set(0, 0, 1);
+  flatDir.normalize();
+  const left = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), flatDir).normalize();
+  sun.target.position.copy(f.center);
+  sun.position.copy(f.center).addScaledVector(flatDir, f.radius * 3).addScaledVector(left, f.radius * 2).add(new THREE.Vector3(0, f.radius * 4, 0));
+  sun.target.updateMatrixWorld();
+  sun.updateMatrixWorld();
+}
+
+/** Pixels of each watched child [a, b) visible from the camera: an ID pass with flat unique colors. */
+function countVisible(entry, watch, W, H) {
+  const n = watch[1] - watch[0];
+  const w = W * PR, h = H * PR;
+  const target = new THREE.WebGLRenderTarget(w, h);
+  const occluder = new THREE.MeshBasicMaterial({ color: black, side: THREE.DoubleSide });
+  const ids = [];
+  const touched = [];
+  entry.group.children.forEach((child, i) => {
+    if (!child.visible) return;
+    const k = i - watch[0];
+    let mat = occluder;
+    if (k >= 0 && k < n) {
+      const id = k + 1;
+      mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setRGB((id & 255) / 255, ((id >> 8) & 255) / 255, ((id >> 16) & 255) / 255, THREE.LinearSRGBColorSpace),
+        side: THREE.DoubleSide,
+      });
+      ids.push(mat);
+    }
+    child.traverse((o) => {
+      if (o.isLineSegments) { touched.push([o, 'visible', o.visible]); o.visible = false; }
+      else if (o.isMesh) {
+        touched.push([o, 'material', o.material]);
+        if (mat === occluder && o.userData.transparent) { touched.push([o, 'visible', o.visible]); o.visible = false; }
+        o.material = mat;
+      }
+    });
+  });
+  scene.background = black;
+  renderer.setRenderTarget(target);
+  renderer.render(scene, cam);
+  const buf = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, w, h, buf);
+  renderer.setRenderTarget(null);
+  scene.background = background;
+  for (let i = touched.length - 1; i >= 0; i--) { const [o, key, value] = touched[i]; o[key] = value; }
+  target.dispose();
+  occluder.dispose();
+  for (const m of ids) m.dispose();
+
+  const counts = new Array(n).fill(0);
+  for (let p = 0; p < buf.length; p += 4) {
+    const id = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16);
+    if (id > 0 && id <= n) counts[id - 1]++;
+  }
+  return counts;
+}
+
+let current = null;
+for (const shot of job.shots) {
+  const entry = await loadModel(shot.model);
+  if (current !== entry) {
+    if (current) scene.remove(current.group);
+    scene.add(entry.group);
+    current = entry;
+  }
+  const { width: W, height: H } = shot;
+  renderer.setSize(W, H);
+  entry.group.children.forEach((child, i) => { child.visible = i >= shot.visible[0] && i < shot.visible[1]; });
+  placeCamera(fit(entry, shot.frame, shot.view, W, H), W, H);
+
+  renderer.render(scene, cam);
+  const blob = await new Promise((resolve) => renderer.domElement.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error(`could not encode ${shot.name}.png`);
+  await post('/result/' + encodeURIComponent(shot.name) + '.png', blob);
+
+  const marks = shot.marks.map(([x, y, z]) => {
+    const p = entry.group.localToWorld(new THREE.Vector3(x, y, z)).project(cam);
+    return [(p.x + 1) / 2 * W * PR, (1 - p.y) / 2 * H * PR];
+  });
+  const hiddenParts = [];
+  if (shot.watch[1] > shot.watch[0]) {
+    countVisible(entry, shot.watch, W, H).forEach((count, k) => { if (count === 0) hiddenParts.push(k); });
+  }
+  await post('/result/' + encodeURIComponent(shot.name) + '.json', JSON.stringify({ marks, hiddenParts }));
+}
+await post('/done', '');
+</script>
+</body>
+</html>
