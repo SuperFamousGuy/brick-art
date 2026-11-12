@@ -168,9 +168,12 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
   };
 
   const sections: Section[] = [];
-  const sectionFiles = new Set<string>();
+  const sectionKeys = new Set<string>();
+  const sectionKeyOf = new Map<Section, string>();
+  const insertKeys = new Map<Insert, string>();
   const edges: { parent: string; child: string }[] = [];
-  const idOf = (file: string) => file.replace(/\.[^./]+$/, '');
+  const keyOf = (file: string, color: number) => `${file}\u0000${color}`;
+  const stemOf = (file: string) => file.replace(/\.[^./]+$/, '');
 
   const buildSteps = (lines: string[], file: string, color: number, depth: number): Step[] => {
     if (depth > MAX_DEPTH) throw new Error(TOO_DEEP);
@@ -181,6 +184,7 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
     let texts: string[] = [];
     const callouts = new Map<string, Callout>();
     const inserts = new Map<string, { insert: Insert; all: Placement[] }>();
+    const selfKey = keyOf(file, color);
 
     const flush = () => {
       const added = [
@@ -221,19 +225,21 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
         c.attach.push(ref.frame.pos);
         continue;
       }
-      if (!sectionFiles.has(ref.file)) {
-        sectionFiles.add(ref.file);
+      const childKey = keyOf(ref.file, ref.frame.color);
+      if (!sectionKeys.has(childKey)) {
+        sectionKeys.add(childKey);
         const built = buildSteps(sub, ref.file, ref.frame.color, depth + 1);
-        sections.push({ id: idOf(ref.file), title: idOf(ref.file), file: ref.file, quantity: 0, steps: built });
+        const section = { id: stemOf(ref.file), title: stemOf(ref.file), file: ref.file, quantity: 0, steps: built };
+        sectionKeyOf.set(section, childKey);
+        sections.push(section);
       }
-      edges.push({ parent: file, child: ref.file });
-      const existing = inserts.get(ref.file);
+      edges.push({ parent: selfKey, child: childKey });
+      const existing = inserts.get(childKey);
       if (existing) { existing.insert.quantity++; existing.all.push(...instance); }
       else {
-        inserts.set(ref.file, {
-          insert: { sectionId: idOf(ref.file), quantity: 1, parts: instance, attach: ref.frame.pos },
-          all: [...instance],
-        });
+        const insert = { sectionId: '', quantity: 1, parts: instance, attach: ref.frame.pos };
+        insertKeys.set(insert, childKey);
+        inserts.set(childKey, { insert, all: [...instance] });
       }
     }
     flush();
@@ -241,13 +247,30 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
   };
 
   const mainSteps = buildSteps(main, mainName, 16, 0);
-  sections.push({ id: stem, title: stem, file: mainName, quantity: 1, steps: mainSteps });
+  const mainSection = { id: stem, title: stem, file: mainName, quantity: 1, steps: mainSteps };
+  sectionKeyOf.set(mainSection, keyOf(mainName, 16));
+  sections.push(mainSection);
+
+  // A file placed in more than one colour gets one section per colour, ids suffixed with the colour.
+  const colorsPerFile = new Map<string, number>();
+  for (const s of sections) colorsPerFile.set(s.file, (colorsPerFile.get(s.file) ?? 0) + 1);
+  const idByKey = new Map<string, string>();
+  for (const s of sections) {
+    const key = sectionKeyOf.get(s)!;
+    if (s !== mainSection && colorsPerFile.get(s.file)! > 1) {
+      s.id = `${stemOf(s.file)}-${key.split('\u0000')[1]}`;
+      s.title = s.id;
+    }
+    idByKey.set(key, s.id);
+  }
+  for (const [insert, key] of insertKeys) insert.sectionId = idByKey.get(key)!;
 
   // Instances of a section = instances of each user times how often it places the section.
-  const quantity = new Map<string, number>([[mainName, 1]]);
+  const quantity = new Map<string, number>([[sectionKeyOf.get(mainSection)!, 1]]);
   for (const s of [...sections].reverse()) {
-    s.quantity = quantity.get(s.file) ?? 0;
-    for (const e of edges) if (e.parent === s.file) quantity.set(e.child, (quantity.get(e.child) ?? 0) + s.quantity);
+    const key = sectionKeyOf.get(s)!;
+    s.quantity = quantity.get(key) ?? 0;
+    for (const e of edges) if (e.parent === key) quantity.set(e.child, (quantity.get(e.child) ?? 0) + s.quantity);
   }
   let number = 0;
   for (const s of sections) for (const step of s.steps) step.number = ++number;

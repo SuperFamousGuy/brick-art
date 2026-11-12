@@ -90,6 +90,26 @@ test('section quantity counts every instance', () => {
   assert.equal(m.sections[1]!.steps[0]!.inserts[0]!.quantity, 2);
 });
 
+test('one file in two colours gets one section per colour', () => {
+  const hull = ['0 hull', part(16), ...Array.from({ length: CALLOUT_MAX_PARTS }, (_, i) => part(7, 20 + i * 20))];
+  const m = parse({ 'model.ldr': [part(4, 0, 0, 0, 'hull.ldr'), '0 STEP', part(1, 100, 0, 0, 'hull.ldr')], 'hull.ldr': hull });
+  assert.deepEqual(m.sections.map((s) => s.id), ['hull-4', 'hull-1', 'model']);
+  assert.deepEqual(m.sections.map((s) => s.quantity), [1, 1, 1]);
+  assert.deepEqual(m.sections.slice(0, 2).map((s) => s.steps[0]!.added[0]!.color), [4, 1]);
+  assert.deepEqual(m.sections[2]!.steps.map((s) => s.inserts[0]!.sectionId), ['hull-4', 'hull-1']);
+});
+
+test('nested large sections multiply quantity and order inner first', () => {
+  const inner = Array.from({ length: CALLOUT_MAX_PARTS + 1 }, (_, i) => part(7, i * 20));
+  const outer = [part(7, 0, 0, 0, 'inner.ldr'), part(7, 0, -24, 0, 'inner.ldr'), part(7, 0, -48, 0, 'inner.ldr')];
+  const m = parse({
+    'model.ldr': [part(4, 0, 0, 0, 'outer.ldr'), part(4, 200, 0, 0, 'outer.ldr')],
+    'outer.ldr': outer, 'inner.ldr': inner,
+  });
+  assert.deepEqual(m.sections.map((s) => s.id), ['inner', 'outer', 'model']);
+  assert.deepEqual(m.sections.map((s) => s.quantity), [6, 2, 1]);
+});
+
 test('color 16 inherits through callouts and sections', () => {
   const inner = ['0 inner', part(16)];
   const big = Array.from({ length: CALLOUT_MAX_PARTS + 1 }, (_, i) => part(16, i * 20));
