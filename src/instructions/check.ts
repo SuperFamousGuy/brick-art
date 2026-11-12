@@ -94,7 +94,14 @@ function resolve(p: Placement, geom: GeometrySource): Placed {
   };
 }
 
-interface StepUnits { number: number; units: Placement[][]; size: number; label: (unit: number) => string }
+interface StepUnits {
+  number: number;
+  units: Placement[][];
+  loose: number;           // units[0 .. loose) are loose parts; the rest are callout or insert groups
+  free: boolean[];         // per unit: its own reference line was accepted, so its attachment is not checked
+  size: number;
+  label: (unit: number) => string;
+}
 
 /** Buckets items by the grid cells their box touches, for neighbourhood queries. */
 class SpatialHash<T> {
@@ -130,7 +137,7 @@ const fmt = (v: Vec3) => `(${v.map((n) => Math.round(n * 100) / 100).join(', ')}
  */
 export function checkModel(model: StepModel, geom: GeometrySource): CheckResult {
   const findings: Finding[] = [];
-  const accepted: Placement[] = [];
+  const accepted = new Set<Placement>();
   const checkedCallouts = new Set<string>();
 
   const report = (kind: FindingKind, section: string, step: number, p: Placement, what: string) => {
@@ -155,8 +162,15 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
   const anyConn = (q: Placed, index: SpatialHash<Conn>, r: number, test: (a: Conn, b: Conn) => boolean) =>
     q.conns!.some((a) => index.query(around(a.pos, r)).some((b) => test(a, b)));
 
-  /** True when the two parts mate through a compatible connection with each other. */
-  const mated = (q: Placed, o: Placed) => !!q.conns && !!o.conns && q.conns.some((a) => o.conns!.some((b) => touching(a, b)));
+  /**
+   * True when the two parts mate through a compatible connection with each other: the points touch,
+   * and the parts sit on opposite sides of the connection plane. The side test rejects a part turned
+   * over into its mate, and works whether the data's mating directions are parallel or anti-parallel
+   * (the parts DB points studs and receptors outward, so a real mate is anti-parallel).
+   */
+  const center = (b: Box): Vec3 => [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+  const mated = (q: Placed, o: Placed) => !!q.conns && !!o.conns && q.conns.some((a) => o.conns!.some((b) =>
+    touching(a, b) && dot(sub(center(q.hull), a.pos), a.dir) * dot(sub(center(o.hull), a.pos), a.dir) < 0));
 
   /**
    * Classifies one colliding pair. Parts that mate with each other are exempt. With grids, a blocking
@@ -199,7 +213,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
       // including earlier units of this step (but not members of the same unit).
       for (const u of units) {
         for (const q of u.members) {
-          if (q.p.accepted) { if (collect.has(q.p)) accepted.push(q.p); continue; }
+          if (q.p.accepted) { if (collect.has(q.p)) accepted.add(q.p); continue; }
           if (!q.geom || !q.geom.connections) report('unverified', section, step.number, q.p, 'has no connection data, so its connection was not checked');
           if (!q.box) continue;
           for (const o of solids.query(q.box)) {
@@ -230,10 +244,13 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
       };
       let pending: typeof units = [];
       for (const u of units) {
+        // An accepted loose part, or a group whose own reference line was accepted, is declared
+        // connected. Accepted parts inside a group are only non-checkable members: they never free it.
         const free = !anchored                                  // the anchor
-          || u.members.some((q) => q.p.accepted)                // declared connected
+          || step.free[u.i]!                                    // declared connected
           || !u.members.some(checkable);                        // nothing to verify
         anchored = true;
+        if (step.free[u.i] && u.i >= step.loose) for (const q of u.members) accepted.add(q.p);   // accepted group
         if (free) placeUnit(u); else pending.push(u);
       }
       // Real connections first; a unit that only rests against a part without connection data
@@ -273,19 +290,23 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
     const steps = section.steps.map((step) => {
       const units: Placement[][] = step.loose.map((p) => [p]);
       const labels: string[] = step.loose.map(() => '');
-      for (const c of step.callouts) for (const inst of c.instances) { units.push(inst); labels.push(`(in callout ${c.file}) `); }
+      const free: boolean[] = step.loose.map((p) => p.accepted);
+      step.callouts.forEach((c) => c.instances.forEach((inst, k) => {
+        units.push(inst); labels.push(`(in callout ${c.file}) `); free.push(c.accepted[k]!);
+      }));
       let offset = step.loose.length + step.callouts.reduce((n, c) => n + c.instances.flat().length, 0);
       for (const ins of step.inserts) {
         const n = ins.parts.length;
         for (let k = 0; k < ins.quantity; k++) {
           units.push(step.added.slice(offset, offset + n));
           labels.push(`(in sub-assembly ${ins.sectionId}) `);
+          free.push(ins.accepted);
           offset += n;
         }
       }
       // Inserted sections were checked in their own steps, so they don't count toward a large step.
       const size = step.loose.length + step.callouts.reduce((n, c) => n + c.instances.flat().length, 0);
-      return { number: step.number, units, size, label: (u: number) => labels[u]! };
+      return { number: step.number, units, loose: step.loose.length, free, size, label: (u: number) => labels[u]! };
     });
     // Accepted parts are collected from loose parts and callout instances only, so each
     // build instruction counts once (inserts repeat a section already collected on its own).
@@ -298,10 +319,10 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         if (checkedCallouts.has(c.file)) continue;
         checkedCallouts.add(c.file);
         checkSteps(section.id, c.miniSteps.map((parts) => ({
-          number: step.number, units: parts.map((p) => [p]), size: 0, label: () => `(in callout ${c.file}) `,
+          number: step.number, units: parts.map((p) => [p]), loose: parts.length, free: parts.map((p) => p.accepted), size: 0, label: () => `(in callout ${c.file}) `,
         })), new Set());
       }
     }
   }
-  return { findings, accepted, blocked: findings.some((f) => f.blocking) };
+  return { findings, accepted: [...accepted], blocked: findings.some((f) => f.blocking) };
 }

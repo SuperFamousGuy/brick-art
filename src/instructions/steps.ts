@@ -21,8 +21,12 @@ export interface Callout {
   miniSteps: Placement[][];  // the submodel's own steps, in the submodel's local frame
   instances: Placement[][];  // world-frame parts of each instance, in placement order
   attach: Vec3[];            // world origin of each instance
+  accepted: boolean[];       // per instance: its reference line was preceded by 0 !BRICKART CONNECTED
 }
-export interface Insert { sectionId: string; quantity: number; parts: Placement[]; attach: Vec3 }
+export interface Insert {
+  sectionId: string; quantity: number; parts: Placement[]; attach: Vec3;
+  accepted: boolean;         // every reference line of this insert in this step was preceded by 0 !BRICKART CONNECTED
+}
 export interface Step {
   number: number;            // 1-based, continuous across the whole booklet
   text: string | null;       // joined `0 //` comments in this step
@@ -217,12 +221,13 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
         let c = callouts.get(ref.file);
         if (!c) {
           const miniSteps = flatten(sub, ref.file, { color: ref.frame.color, pos: ZERO, rot: IDENTITY }, depth + 1);
-          c = { file: ref.file, quantity: 0, miniSteps, instances: [], attach: [] };
+          c = { file: ref.file, quantity: 0, miniSteps, instances: [], attach: [], accepted: [] };
           callouts.set(ref.file, c);
         }
         c.quantity++;
         c.instances.push(instance);
         c.attach.push(ref.frame.pos);
+        c.accepted.push(ref.accepted);
         continue;
       }
       const childKey = keyOf(ref.file, ref.frame.color);
@@ -235,9 +240,12 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
       }
       edges.push({ parent: selfKey, child: childKey });
       const existing = inserts.get(childKey);
-      if (existing) { existing.insert.quantity++; existing.all.push(...instance); }
-      else {
-        const insert = { sectionId: '', quantity: 1, parts: instance, attach: ref.frame.pos };
+      if (existing) {
+        existing.insert.quantity++;
+        existing.insert.accepted &&= ref.accepted;
+        existing.all.push(...instance);
+      } else {
+        const insert = { sectionId: '', quantity: 1, parts: instance, attach: ref.frame.pos, accepted: ref.accepted };
         insertKeys.set(insert, childKey);
         inserts.set(childKey, { insert, all: [...instance] });
       }

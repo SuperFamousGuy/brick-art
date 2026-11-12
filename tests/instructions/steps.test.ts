@@ -83,6 +83,23 @@ test('large submodel becomes its own section first', () => {
   assert.deepEqual(m.sections.flatMap((s) => s.steps.map((st) => st.number)), [1, 2, 3, 4]);
 });
 
+test('CONNECTED before a submodel reference sets the callout and insert flags', () => {
+  const hull = Array.from({ length: CALLOUT_MAX_PARTS + 1 }, (_, i) => part(7, i * 20));
+  const m = parse({
+    'model.ldr': [
+      '0 !BRICKART CONNECTED', part(4, 0, 0, 0, 'wheel.ldr'), part(4, 40, 0, 0, 'wheel.ldr'),
+      '0 STEP', '0 !BRICKART CONNECTED', part(4, 0, -24, 0, 'hull.ldr'),
+      '0 STEP', part(4, 0, -48, 0, 'hull.ldr'),
+    ],
+    'wheel.ldr': wheel,
+    'hull.ldr': hull,
+  });
+  const [s1, s2, s3] = m.sections.find((s) => s.id === 'model')!.steps;
+  assert.deepEqual(s1!.callouts[0]!.accepted, [true, false]);
+  assert.equal(s2!.inserts[0]!.accepted, true);
+  assert.equal(s3!.inserts[0]!.accepted, false);
+});
+
 test('section quantity counts every instance', () => {
   const hull = Array.from({ length: CALLOUT_MAX_PARTS + 1 }, (_, i) => part(7, i * 20));
   const m = parse({ 'model.ldr': [part(4, 0, 0, 0, 'hull.ldr'), part(4, 200, 0, 0, 'Hull.ldr')], 'hull.ldr': hull });

@@ -21,7 +21,15 @@ const BOX: PartGeom = {
 // Bounds include the stud, like real LDraw parts, so stacked copies share one grid layer.
 const STUDDED: PartGeom = { ...BOX, bounds: { min: [-10, -4, -10], max: [10, 24, 10] }, grid: [[[1]], [[1]], [[1]], [[1]]] };
 const BLOB: PartGeom = { ...BOX, connections: null };
-const PARTS: Record<string, PartGeom> = { 'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB };
+// The parts DB's convention: studs point up (-y) and receptors point down (+y), so a real mate is anti-parallel.
+const OUTWARD: PartGeom = {
+  ...STUDDED,
+  connections: [
+    { type: 'stud', position: [0, 0, 0], direction: [0, -1, 0] },
+    { type: 'stud_receptor', position: [0, 24, 0], direction: [0, 1, 0] },
+  ],
+};
+const PARTS: Record<string, PartGeom> = { 'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB, 'outward.dat': OUTWARD };
 const geom: GeometrySource = {
   get: (f) => PARTS[f] ?? null,
   compatible: (a, b) => (a === 'stud' && b === 'stud_receptor') || (a === 'stud_receptor' && b === 'stud'),
@@ -185,4 +193,35 @@ test('a part resting on a part without connections is unverified, not floating',
   assert.deepEqual(r.findings.map((f) => [f.kind, f.step]), [['unverified', 1], ['unverified', 2]]);
   assert.match(r.findings[1]!.message, /touches blob\.dat/);
   assert.equal(r.blocked, false);
+});
+
+test('an accepted part inside a callout does not free the callout', () => {
+  const r = check({
+    'model.ldr': [box(), '0 STEP', '1 4 0 -500 0 1 0 0 0 1 0 0 0 1 pair.ldr'],
+    'pair.ldr': [box(0, 0), '0 STEP', '0 !BRICKART CONNECTED', box(0, -24)],
+  });
+  assert.ok(r.findings.some((f) => f.kind === 'floating' && f.blocking && f.step === 2), JSON.stringify(r.findings));
+  assert.equal(r.blocked, true);
+});
+
+test('a part inverted onto its mate is still an overlap', () => {
+  const r = two(box(0, 24, 0, '1 0 0 0 -1 0 0 0 -1'));
+  assert.ok(r.findings.some((f) => f.kind === 'overlap' && f.blocking && f.step === 2), JSON.stringify(r.findings));
+});
+
+test('CONNECTED before a callout reference frees the callout', () => {
+  const r = check({
+    'model.ldr': [box(), '0 STEP', '0 !BRICKART CONNECTED', '1 4 0 -500 0 1 0 0 0 1 0 0 0 1 pair.ldr'],
+    'pair.ldr': [box(0, 0), '0 STEP', box(0, -24)],
+  });
+  assert.ok(!r.findings.some((f) => f.blocking), JSON.stringify(r.findings));
+  assert.equal(r.blocked, false);
+  assert.equal(r.accepted.length, 2);
+});
+
+test('mating exemption works with outward-pointing (anti-parallel) connection data', () => {
+  const ok = check({ 'model.ldr': [box(0, 0, 0, undefined, 'outward.dat'), '0 STEP', box(0, -24, 0, undefined, 'outward.dat')] });
+  assert.deepEqual(ok.findings, []);
+  const flipped = check({ 'model.ldr': [box(0, 0, 0, undefined, 'outward.dat'), '0 STEP', box(0, 24, 0, '1 0 0 0 -1 0 0 0 -1', 'outward.dat')] });
+  assert.ok(flipped.findings.some((f) => f.kind === 'overlap' && f.blocking), JSON.stringify(flipped.findings));
 });
