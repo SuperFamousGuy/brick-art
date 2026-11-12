@@ -9,7 +9,7 @@ import { checkModel, type Finding } from './check.ts';
 import type { GeometrySource } from './geometry.ts';
 import { layoutBooklet } from './layout.ts';
 import { renderShots, stepDigits, stepShotName } from './render-steps.ts';
-import { parseSteps, type Placement, type Step } from './steps.ts';
+import { parseSteps, type Placement, type Step, type StepModel } from './steps.ts';
 
 export interface InstructionsResult {
   status: 'built' | 'blocked';
@@ -37,6 +37,25 @@ function reportableCount(step: Step): number {
 }
 
 /**
+ * Adds a non-blocking `large-step` finding for each step too crowded to fit one page. A step the
+ * check already reported as large gets the crowding note appended to that finding instead.
+ */
+export function addCrowdedFindings(model: StepModel, findings: Finding[]): void {
+  for (const section of model.sections) {
+    for (const step of section.steps) {
+      if (planCell(step, 3).fits) continue;
+      const existing = findings.find((f) => f.kind === 'large-step' && f.section === section.id && f.step === step.number);
+      if (existing) {
+        existing.message = `${existing.message.replace(/\.$/, '')}; it is too crowded to fit one page.`;
+        continue;
+      }
+      const first = step.added[0];
+      if (first) findings.push(finding('large-step', section.id, step.number, first, 'starts a step that is too crowded to fit one page'));
+    }
+  }
+}
+
+/**
  * Builds the instruction booklet for an LDraw model: checks each step's connections (when a parts
  * geometry source is given), renders every step, and prints a PDF. A blocked model renders nothing.
  */
@@ -54,14 +73,7 @@ export async function buildInstructions(opts: {
   const findings: Finding[] = check ? [...check.findings] : [];
   const accepted = (check?.accepted ?? []).map((p) => ({ part: p.part, color: p.color, source: p.source }));
 
-  for (const section of model.sections) {
-    for (const step of section.steps) {
-      if (!planCell(step, 3).fits) {
-        const first = step.added[0];
-        if (first) findings.push(finding('large-step', section.id, step.number, first, 'starts a step that is too crowded to fit one page'));
-      }
-    }
-  }
+  addCrowdedFindings(model, findings);
 
   const stepRows = (shots: Map<string, { png: string }> | null) => {
     const digits = stepDigits(model);

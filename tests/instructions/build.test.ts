@@ -3,10 +3,13 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { buildInstructions } from '../../src/instructions/build.ts';
+import { addCrowdedFindings, buildInstructions } from '../../src/instructions/build.ts';
 import type { GeometrySource, PartGeom } from '../../src/instructions/geometry.ts';
 import { findBrowser } from '../../src/render/browser.ts';
 import { ZipIndex } from '../../src/render/zip-index.ts';
+import { planCell } from '../../src/instructions/cell-plan.ts';
+import type { Finding } from '../../src/instructions/check.ts';
+import { fakeModel, fakeStep, section } from '../helpers/fake-steps.ts';
 import { writeLibrary } from '../helpers/ldraw-fixture.ts';
 
 const dirs: string[] = [];
@@ -60,4 +63,52 @@ test('step parts match the model', { skip: noBrowser, timeout: 240_000 }, async 
   const total = r.steps.flatMap((s) => s.parts).reduce((n, p) => n + p.count, 0);
   assert.equal(total, r.totalParts);
   assert.equal(r.steps[0]!.parts[0]!.part, 'box');
+});
+
+function crowdedStep() {
+  const step = fakeStep(1, { callouts: 20 });
+  for (const c of step.callouts) c.miniSteps = Array.from({ length: 6 }, () => c.miniSteps[0]!);
+  return step;
+}
+
+test('a crowded step yields exactly one large-step finding', () => {
+  const step = crowdedStep();
+  assert.equal(planCell(step, 3).fits, false);
+  const model = fakeModel([section('test', [step])]);
+  // Without the check (no geometry): one new finding.
+  const none: Finding[] = [];
+  addCrowdedFindings(model, none);
+  assert.equal(none.length, 1);
+  assert.equal(none[0]!.kind, 'large-step');
+  assert.equal(none[0]!.blocking, false);
+  assert.match(none[0]!.message, /too crowded to fit one page/);
+  // With the check already reporting a large step: its message is extended, not duplicated.
+  const reported: Finding[] = [{ ...none[0]!, message: 'Step 1: 3001.dat (color 4) at (0, 0, 0) starts a step that adds 20 parts (more than 8).' }];
+  addCrowdedFindings(model, reported);
+  assert.equal(reported.length, 1);
+  assert.match(reported[0]!.message, /adds 20 parts.*too crowded to fit one page/);
+});
+
+test('a step that fits adds no finding', () => {
+  const none: Finding[] = [];
+  addCrowdedFindings(fakeModel([section('test', [fakeStep(1)])]), none);
+  assert.deepEqual(none, []);
+});
+
+test('hidden loose parts are reported, hidden insert parts are not', { skip: noBrowser, timeout: 240_000 }, async () => {
+  const big = (c: number, x: number, y: number, z: number, f: string) => `1 ${c} ${x} ${y} ${z} 1 0 0 0 1 0 0 0 1 ${f}`;
+  // Loose: a box inside big.dat.
+  const a = setup([big(4, 0, 0, 0, 'big.dat'), '0 STEP', big(1, 0, -20, 0, 'box.dat')]);
+  const ra = await buildInstructions({ modelPath: a.modelPath, browser: browser!, library: a.library, geometry: null });
+  const hidden = ra.findings.filter((f) => f.kind === 'unverified');
+  assert.equal(hidden.length, 1);
+  assert.equal(hidden[0]!.blocking, false);
+  assert.match(hidden[0]!.message, /hidden from the camera/);
+  // Insert: a 9-part sub-assembly added in step 2; its part hidden inside the inserted group is not reported.
+  // The box is visible in the sub-assembly's own section but sits inside the main model's big.dat.
+  const sub = [big(1, 0, -20, 0, 'box.dat'), ...Array.from({ length: 8 }, (_, i) => big(4, 200 + i * 40, 0, 0, 'box.dat'))];
+  const b = setup([big(4, 0, 0, 0, 'big.dat'), '0 STEP', big(4, 0, 0, 0, 'sub.ldr')]);
+  writeFileSync(join(b.dir, 'sub.ldr'), sub.join('\n') + '\n');
+  const rb = await buildInstructions({ modelPath: b.modelPath, browser: browser!, library: b.library, geometry: null });
+  assert.deepEqual(rb.findings.filter((f) => f.kind === 'unverified'), []);
 });
