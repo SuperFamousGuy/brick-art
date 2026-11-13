@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { splitMpd } from '../render/tally.ts';
+import { isPartFile, splitMpd } from '../render/tally.ts';
 import type { Mat3, Vec3 } from '../types.ts';
 
 export const CALLOUT_MAX_PARTS = 8;
@@ -25,7 +25,7 @@ export interface Callout {
 }
 export interface Insert {
   sectionId: string; quantity: number; parts: Placement[]; attach: Vec3;
-  accepted: boolean;         // every reference line of this insert in this step was preceded by 0 !BRICKART CONNECTED
+  accepted: boolean;         // this insert's reference lines were preceded by 0 !BRICKART CONNECTED (accepted and unaccepted instances are separate inserts)
 }
 export interface Step {
   number: number;            // 1-based, continuous across the whole booklet
@@ -116,7 +116,7 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
   const localPaths = new Map<string, string>();
   for (const f of readdirSync(dir)) localPaths.set(f.toLowerCase(), join(dir, f));
 
-  const submodel = (ref: string): string[] | null => {
+  const fileLines = (ref: string): string[] | null => {
     if (opts.isLibraryPart(ref)) return null;
     const inMpd = files.get(ref);
     if (inMpd) return inMpd;
@@ -125,6 +125,11 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
     const lines = splitMpd(readFileSync(path, 'utf8')).main;
     files.set(ref, lines);
     return lines;
+  };
+  /** A submodel's lines, or null for a part: a library part, or a local file with its own geometry. */
+  const submodel = (ref: string): string[] | null => {
+    const lines = fileLines(ref);
+    return lines && !isPartFile(lines) ? lines : null;
   };
 
   /** The events of one file's lines, with each placement already in the frame `frame`. */
@@ -172,9 +177,10 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
       if (ev.kind === 'break') groups.push([]);
       if (ev.kind !== 'ref') continue;
       const sub = submodel(ev.ref.file);
-      groups[groups.length - 1]!.push(
-        ...(sub ? flatten(sub, ev.ref.file, ev.ref.frame, depth + 1).flat() : [placement(ev.ref, file)]),
-      );
+      // CONNECTED before a nested submodel reference accepts every part it expands to, so the
+      // override still works inside a callout's mini-steps.
+      const parts = sub ? flatten(sub, ev.ref.file, ev.ref.frame, depth + 1).flat() : [placement(ev.ref, file)];
+      groups[groups.length - 1]!.push(...(ev.ref.accepted ? parts.map((p) => ({ ...p, accepted: true })) : parts));
     }
     return groups.filter((g) => g.length > 0);
   };
@@ -249,15 +255,17 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
         sections.push(section);
       }
       edges.push({ parent: selfKey, child: childKey });
-      const existing = inserts.get(childKey);
+      // Instances accepted with CONNECTED and instances that are not go in separate inserts, so each
+      // keeps its own override.
+      const groupKey = `${childKey}\u0000${ref.accepted}`;
+      const existing = inserts.get(groupKey);
       if (existing) {
         existing.insert.quantity++;
-        existing.insert.accepted &&= ref.accepted;
         existing.all.push(...instance);
       } else {
         const insert = { sectionId: '', quantity: 1, parts: instance, attach: ref.frame.pos, accepted: ref.accepted };
         insertKeys.set(insert, childKey);
-        inserts.set(childKey, { insert, all: [...instance] });
+        inserts.set(groupKey, { insert, all: [...instance] });
       }
     }
     flush();

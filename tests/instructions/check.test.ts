@@ -350,3 +350,32 @@ test('a callout part that never joins says so for the callout', () => {
   assert.ok(f, JSON.stringify(r.findings));
   assert.match(f!.message, /never joins the finished callout pair\.ldr\.$/);
 });
+
+test('CONNECTED before a callout reference also exempts it from overlap with the model', () => {
+  // The pair sits inside the base box: a blocking overlap unless its reference line is accepted.
+  const plain = check({ 'model.ldr': [box(), '0 STEP', box(0, 0, 0, undefined, 'pair.ldr')], 'pair.ldr': ['0 pair', box(), box(0, -24)] });
+  assert.ok(plain.findings.some((f) => f.kind === 'overlap' && f.blocking), JSON.stringify(plain.findings));
+  const ok = check({ 'model.ldr': [box(), '0 STEP', '0 !BRICKART CONNECTED', box(0, 0, 0, undefined, 'pair.ldr')], 'pair.ldr': ['0 pair', box(), box(0, -24)] });
+  assert.equal(ok.blocked, false, JSON.stringify(ok.findings));
+});
+
+test('CONNECTED before a nested reference inside a callout accepts it in the mini-steps', () => {
+  // pair.ldr places a floating single-brick submodel; the override on that reference must hold.
+  const files = (flag: string[]) => ({
+    'model.ldr': [box(), '0 STEP', box(0, -24, 0, undefined, 'pair.ldr')],
+    'pair.ldr': ['0 pair', box(), '0 STEP', ...flag, box(0, -500, 0, undefined, 'one.ldr')],
+    'one.ldr': ['0 one', box()],
+  });
+  assert.equal(check(files([])).blocked, true);
+  const r = check(files(['0 !BRICKART CONNECTED']));
+  assert.equal(r.blocked, false, JSON.stringify(r.findings));
+});
+
+test('two copies of a sub-assembly in one step keep their own CONNECTED flags', () => {
+  const hull = ['0 hull', ...Array.from({ length: 9 }, (_, i) => box(0, -24 * i))];
+  const r = check({
+    'model.ldr': [box(), '0 STEP', '0 !BRICKART CONNECTED', box(500, 0, 0, undefined, 'hull.ldr'), box(0, -24, 0, undefined, 'hull.ldr')],
+    'hull.ldr': hull,
+  });
+  assert.equal(r.blocked, false, JSON.stringify(r.findings));
+});

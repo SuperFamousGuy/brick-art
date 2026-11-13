@@ -263,9 +263,12 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
       // Per-part overlap with everything placed earlier, including earlier units of this step (but
       // not members of the same unit).
       for (const u of units) {
+        // A group accepted on its own reference line is exempt from these outside overlaps too; its
+        // parts were checked against each other in its own steps.
+        const groupAccepted = step.free[u.i] && u.i >= step.loose;
         for (const q of u.members) {
           if (q.p.accepted) { if (collect.has(q.p)) accepted.add(q.p); continue; }
-          if (!q.box) continue;
+          if (!q.box || groupAccepted) continue;
           for (const o of solids.query(q.box)) {
             const kind = overlap(q, o);
             if (kind === 'overlap') report('overlap', section, step.number, q.p, `overlaps ${named(o.p)}`);

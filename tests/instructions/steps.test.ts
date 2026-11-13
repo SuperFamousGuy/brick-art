@@ -162,6 +162,30 @@ test('one small submodel in two colours in one step gives one callout per colour
   assert.deepEqual(step.callouts.map((c) => c.instances.map((i) => i[0]!.color)), [[4, 4], [1]]);
 });
 
+test('a local file with its own geometry is a part, not a submodel, here and in tallyModel', () => {
+  const path = write({
+    'model.ldr': [part(4), part(4, 0, -24, 0, 'custom.dat')],
+    'custom.dat': ['0 Custom part', '3 16 0 0 0 10 0 0 0 0 10', '1 16 0 0 0 1 0 0 0 1 0 0 0 1 inner.dat'],
+  });
+  // Only 3001 and inner.dat are in the library; custom.dat lives in the model's folder.
+  const inLibrary = (f: string) => f === '3001.dat' || f === 'inner.dat';
+  const m = parseSteps(path, { isLibraryPart: inLibrary });
+  assert.deepEqual(m.sections[0]!.steps[0]!.loose.map((p) => p.part), ['3001.dat', 'custom.dat']);
+  assert.deepEqual(m.parts.map((p) => p.part).sort(), ['3001', 'custom']);
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  const local = new Map(readdirSync(dir).map((f) => [f, join(dir, f)]));
+  const library = { has: (p: string) => inLibrary(p.replace(/^parts\//, '')) } as unknown as ZipIndex;
+  const tally = tallyModel(readFileSync(path, 'utf8'), local, library, new Map());
+  assert.deepEqual(m.parts, tally.map(({ part: p, color, count }) => ({ part: p, color, count })));
+});
+
+test('accepted and unaccepted copies of a sub-assembly in one step are separate inserts', () => {
+  const hull = ['0 hull', ...Array.from({ length: CALLOUT_MAX_PARTS + 1 }, (_, i) => part(16, i * 20))];
+  const m = parse({ 'model.ldr': ['0 !BRICKART CONNECTED', part(4, 0, 0, 0, 'hull.ldr'), part(4, 0, -24, 0, 'hull.ldr'), part(4, 0, -48, 0, 'hull.ldr')], 'hull.ldr': hull });
+  const step = m.sections[m.sections.length - 1]!.steps[0]!;
+  assert.deepEqual(step.inserts.map((i) => [i.sectionId, i.quantity, i.accepted]), [['hull', 1, true], ['hull', 2, false]]);
+});
+
 test('ROTSTEP sets the view', () => {
   const m = parse({
     'model.ldr': [part(4), '0 ROTSTEP 0 180 0 ABS', part(4, 0, -24), '0 ROTSTEP END', part(4, 0, -48)],
