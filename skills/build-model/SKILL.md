@@ -139,7 +139,9 @@ size. The totals must match the `render_model` tally.
 - **Floating clusters.** A `floating` (or `off-grid`) finding covers one cluster: the
   parts of one step that connect to each other but not to the model. Its message gives
   the part count, up to 5 parts with color and position, and either "first joins the
-  model in step N via <part> at <position>" or "never joins the finished model". A
+  model in step N via <part> at <position>" or "never joins the finished model". Inside
+  a section or callout the message names it instead: "sub-assembly <id>" or "callout
+  <file>". A
   cluster that joins in a later step is still blocking: move the joining part into
   the cluster's step or earlier, or reorder the steps. A cluster that never joins
   needs its position or a connecting part fixed. The finding's `part`, `pos`, and
