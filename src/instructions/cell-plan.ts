@@ -35,9 +35,15 @@ export interface CellPlan {
   boxes: CalloutBox[]; side: boolean; bottom: number; fits: boolean;
 }
 
-/** Cell kinds: 1 = one grid slot, 2 = a full column, 3 = the whole page (image on the left, callouts on the right). */
-export function cellSize(span: 1 | 2 | 3): { w: number; h: number } {
-  return { w: span === 3 ? PAGE_W : COL_W, h: span === 1 ? ROW_H : PAGE_H };
+/**
+ * Cell kinds: 1 = one grid slot, 2 = a full column, 4 = two full columns, 3 = the whole page.
+ * Kinds 4 and 3 put the image on the left and the callouts to its right (one lane, or two).
+ */
+export type Span = 1 | 2 | 3 | 4;
+
+export function cellSize(span: Span): { w: number; h: number } {
+  const w = span === 3 ? PAGE_W : span === 4 ? 2 * COL_W + COL_GAP : COL_W;
+  return { w, h: span === 1 ? ROW_H : PAGE_H };
 }
 
 export function groupLoose(step: Step): Group[] {
@@ -59,7 +65,7 @@ export function groupParts(parts: Placement[]): Group[] {
 interface Item { kind: 'callout' | 'insert'; i: number; qty: number; n: number; groups: Group[] }
 
 /** Lays out one step's parts box, image, and callout boxes in a cell, shrinking callout images (and gaps) until they fit. */
-export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
+export function planCell(step: Step, span: Span): CellPlan {
   const { w, h } = cellSize(span);
   const groups = groupLoose(step);
   let partsBoxH = 0;
@@ -76,14 +82,16 @@ export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
     })),
     ...step.inserts.map((c, i): Item => ({ kind: 'insert', i, qty: c.quantity, n: 1, groups: [] })),
   ];
-  const side = span === 3;
-  const colW = side ? (PAGE_W - COL_W - 0.3) / 2 : IMG_W;
+  const side = span === 3 || span === 4;
+  const lanes = span === 3 ? 2 : 1;
+  const colW = side ? (w - COL_W - 0.1 - 0.1 * lanes) / lanes : IMG_W;
   const x0 = side ? COL_W + 0.1 : PAD;
   const top0 = side ? 0.1 : img.y + img.h + 0.12;
   const avail = h - top0 - PAD;
 
-  const dims = (it: Item, s: number) => {
-    const cols = it.kind === 'insert' ? 1 : it.n <= 2 ? it.n : it.n <= 4 ? 2 : 3;
+  /** `extra` widens each callout's mini-step grid by that many columns (fewer, smaller rows). */
+  const dims = (it: Item, s: number, extra: number) => {
+    const cols = it.kind === 'insert' ? 1 : Math.min(it.n, (it.n <= 2 ? it.n : it.n <= 4 ? 2 : 3) + extra);
     const rows = Math.ceil(it.n / cols);
     const gap = GAP * s;
     const mw = Math.min(1.5, (colW - 2 * gap - (cols - 1) * gap) / cols) * s;
@@ -94,23 +102,29 @@ export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
     return { cols, rows, gap, mw, mh: mw * 0.75, head, strip, bh };
   };
   /** Column assignment and total height at a scale. */
-  const arrange = (s: number) => {
-    const lanes = side ? 2 : 1;
+  const arrange = (s: number, extra: number) => {
     const heights = new Array<number>(lanes).fill(0);
     const placed = items.map((it) => {
       const lane = heights.indexOf(Math.min(...heights));
-      const d = dims(it, s);
+      const d = dims(it, s, extra);
       const y = top0 + heights[lane]!;
       heights[lane]! += d.bh + BETWEEN;
       return { it, d, lane, y };
     });
     return { placed, used: Math.max(0, ...heights) - (items.length ? BETWEEN : 0) };
   };
-  let scale = 1;
-  let arr = arrange(scale);
-  while (arr.used > avail && scale > MIN_SCALE) {
-    scale = Math.max(MIN_SCALE, scale - 0.05);
-    arr = arrange(scale);
+  // Shrink the mini-step images until the callouts fit. In a wide cell, if they still do not at
+  // MIN_SCALE, lay each callout's mini-steps out in more columns and try again (a single column is
+  // too narrow for that to stay readable).
+  let arr = arrange(1, 0);
+  for (let extra = 0; extra <= (side ? 2 : 0); extra++) {
+    let scale = 1;
+    arr = arrange(scale, extra);
+    while (arr.used > avail && scale > MIN_SCALE) {
+      scale = Math.max(MIN_SCALE, scale - 0.05);
+      arr = arrange(scale, extra);
+    }
+    if (arr.used <= avail) break;
   }
   const boxes: CalloutBox[] = arr.placed.map(({ it, d, lane, y }) => ({
     kind: it.kind, i: it.i, qty: it.qty, count: it.n, cols: d.cols, rows: d.rows,

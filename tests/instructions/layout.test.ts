@@ -29,10 +29,29 @@ test('a step that does not fit in order starts the next page', () => {
 
 test('placeCells fills the grid in reading order', () => {
   assert.deepEqual(placeCells([2, 1, 1, 1, 1]), [
-    { row: 0, col: 0, rows: 2 }, { row: 0, col: 1, rows: 1 }, { row: 0, col: 2, rows: 1 },
-    { row: 1, col: 1, rows: 1 }, { row: 1, col: 2, rows: 1 },
+    { row: 0, col: 0, rows: 2, cols: 1 }, { row: 0, col: 1, rows: 1, cols: 1 }, { row: 0, col: 2, rows: 1, cols: 1 },
+    { row: 1, col: 1, rows: 1, cols: 1 }, { row: 1, col: 2, rows: 1, cols: 1 },
   ]);
   assert.equal(placeCells([1, 1, 1, 1, 1, 1, 1]), null);
+});
+
+function tallStep(number: number) {
+  const step = fakeStep(number, { callouts: 4, loose: 10 });
+  step.loose.forEach((p, i) => { p.part = `300${i}.dat`; });
+  for (const c of step.callouts) c.miniSteps = Array.from({ length: 4 }, () => c.miniSteps[0]!);
+  return step;
+}
+
+test('a step too tall for a column takes two columns and shares its page', () => {
+  const steps = [fakeStep(1, { callouts: 1 }), tallStep(2), fakeStep(3)];
+  const pages = layoutBooklet(fakeModel([section('test', steps)])).filter((p) => p.kind === 'steps');
+  assert.deepEqual(pages.map((p) => p.cells!.map((c) => [c.step, c.span])), [[[1, 2], [2, 4]], [[3, 1]]]);
+});
+
+test('placeCells puts a two-column cell in two free columns', () => {
+  assert.deepEqual(placeCells([2, 4]), [{ row: 0, col: 0, rows: 2, cols: 1 }, { row: 0, col: 1, rows: 2, cols: 2 }]);
+  assert.deepEqual(placeCells([4, 1, 1]), [{ row: 0, col: 0, rows: 2, cols: 2 }, { row: 0, col: 2, rows: 1, cols: 1 }, { row: 1, col: 2, rows: 1, cols: 1 }]);
+  assert.equal(placeCells([1, 1, 4]), null);
 });
 
 test('section dividers only with more than one section', () => {

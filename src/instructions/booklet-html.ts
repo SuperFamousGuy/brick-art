@@ -52,7 +52,7 @@ function lastShot(ctx: Ctx, section: Section | undefined): ShotResult | undefine
   return last ? ctx.shots.get(stepShotName(last.number, ctx.digits)) : undefined;
 }
 
-function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: number; rows: number }): string {
+function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: number; rows: number; cols: number }): string {
   const plan = planCell(step, cell.span);
   const { w, h } = plan;
   const parts: string[] = [];
@@ -116,7 +116,7 @@ function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: numb
   const svg = `<svg class="over" viewBox="0 0 ${n(w)} ${n(h)}" preserveAspectRatio="none"><defs>`
     + `<marker id="${id}" markerWidth="0.16" markerHeight="0.16" refX="0.14" refY="0.08" orient="auto" markerUnits="userSpaceOnUse">`
     + '<path d="M0 0L0.16 0.08L0 0.16z" fill="#333"/></marker></defs>' + over.join('') + '</svg>';
-  const cols = cell.span === 3 ? '1 / span 3' : String(at.col + 1);
+  const cols = at.cols > 1 ? `${at.col + 1} / span ${at.cols}` : String(at.col + 1);
   const style = `grid-row:${at.row + 1} / span ${at.rows};grid-column:${cols};width:${n(w)}in;height:${n(h)}in`;
   return `<div class="cell" style="${style}">${parts.join('')}${svg}</div>`;
 }

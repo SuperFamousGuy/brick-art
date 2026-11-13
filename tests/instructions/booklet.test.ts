@@ -87,16 +87,26 @@ test('printToPdf writes a PDF', { skip: noBrowser, timeout: 60_000 }, async () =
   assert.equal(readFileSync(join(dir, 'a.pdf')).subarray(0, 4).toString(), '%PDF');
 });
 
-function crowdedStep() {
-  const step = fakeStep(1, { callouts: 4, loose: 10 });
+function crowdedStep(callouts = 4) {
+  const step = fakeStep(1, { callouts, loose: 10 });
   step.loose.forEach((p, i) => { p.part = `300${i}.dat`; });
   for (const c of step.callouts) c.miniSteps = Array.from({ length: 4 }, () => c.miniSteps[0]!);
   return step;
 }
 
-test('a crowded step gets a whole page and its content fits the cell', () => {
+test('a step too tall for a column gets two columns and its content fits the cell', () => {
   const step = crowdedStep();
   assert.equal(planCell(step, 2).fits, false);
+  const plan = planCell(step, 4);
+  assert.ok(plan.fits);
+  for (const b of plan.boxes) assert.ok(b.y + b.h <= plan.h && b.x + b.w <= plan.w);
+  const model = fakeModel([section('test', [step])]);
+  assert.match(build(model), /grid-column:1 \/ span 2;[^"]*width:6\.75in;height:7\.7in/);
+});
+
+test('a crowded step gets a whole page and its content fits the cell', () => {
+  const step = crowdedStep(9);
+  assert.equal(planCell(step, 4).fits, false);
   const model = fakeModel([section('test', [step, fakeStep(2)])]);
   const pages = layoutBooklet(model).filter((p) => p.kind === 'steps');
   assert.deepEqual(pages.map((p) => p.cells!.map((c) => [c.step, c.span])), [[[1, 3]], [[2, 1]]]);

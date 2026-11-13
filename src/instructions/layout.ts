@@ -1,8 +1,11 @@
-import { planCell } from './cell-plan.ts';
+import { planCell, type Span } from './cell-plan.ts';
 import type { Section, Step, StepModel } from './steps.ts';
 
-/** span 2 = a full column (both rows) of the 3 x 2 grid; span 3 = the whole page, for a step whose callouts do not fit in a column. */
-export interface Cell { step: number; span: 1 | 2 | 3 }
+/**
+ * span 1 = one slot of the 3 x 2 grid; 2 = a full column (both rows); 4 = two full columns, for a
+ * step whose callouts do not fit in one; 3 = the whole page, when they do not fit in two either.
+ */
+export interface Cell { step: number; span: Span }
 export interface Page { kind: 'cover' | 'section' | 'steps' | 'parts'; sectionId?: string; cells?: Cell[] }
 
 export const GRID_COLS = 3;
@@ -11,14 +14,14 @@ export const GRID_ROWS = 2;
 export const PARTS_PER_PAGE = 24;
 const BIG_LOOSE = 4;
 
-export interface Placed { row: number; col: number; rows: number }
+export interface Placed { row: number; col: number; rows: number; cols: number }
 
 /**
  * Places cells on the grid in reading order: each cell goes in the first free spot at or after the
- * previous cell. A span-2 cell needs a whole free column, so it can only start in the top row.
- * Returns null when the cells do not all fit on one page.
+ * previous cell. A span-2 cell needs a whole free column and a span-4 cell two side by side, so both
+ * can only start in the top row. Returns null when the cells do not all fit on one page.
  */
-export function placeCells(spans: (1 | 2 | 3)[]): Placed[] | null {
+export function placeCells(spans: Span[]): Placed[] | null {
   const taken = Array.from({ length: GRID_ROWS }, () => new Array<boolean>(GRID_COLS).fill(false));
   const out: Placed[] = [];
   let cursor = 0; // row-major index of the next candidate spot
@@ -26,7 +29,7 @@ export function placeCells(spans: (1 | 2 | 3)[]): Placed[] | null {
     if (span === 3) {
       if (out.length > 0) return null;
       taken.forEach((r) => r.fill(true));
-      out.push({ row: 0, col: 0, rows: 2 });
+      out.push({ row: 0, col: 0, rows: 2, cols: GRID_COLS });
       cursor = GRID_ROWS * GRID_COLS;
       continue;
     }
@@ -34,25 +37,32 @@ export function placeCells(spans: (1 | 2 | 3)[]): Placed[] | null {
     for (let i = cursor; i < GRID_ROWS * GRID_COLS; i++) {
       const row = Math.floor(i / GRID_COLS);
       const col = i % GRID_COLS;
-      if (taken[row]![col]) continue;
-      if (span === 2 && (row !== 0 || taken[1]![col])) continue;
+      const cols = span === 4 ? 2 : 1;
+      if (col + cols > GRID_COLS || (span !== 1 && row !== 0)) continue;
+      // A slot cell needs its own spot free; a column cell needs both rows of each of its columns.
+      const free = (c: number) => span === 1 ? !taken[row]![c] : !taken[0]![c] && !taken[1]![c];
+      if (!free(col) || (cols === 2 && !free(col + 1))) continue;
       at = i;
       break;
     }
     if (at < 0) return null;
     const row = Math.floor(at / GRID_COLS);
     const col = at % GRID_COLS;
-    taken[row]![col] = true;
-    if (span === 2) taken[1]![col] = true;
-    out.push({ row, col, rows: span });
+    const cols = span === 4 ? 2 : 1;
+    for (let c = col; c < col + cols; c++) {
+      taken[row]![c] = true;
+      if (span !== 1) taken[1]![c] = true;
+    }
+    out.push({ row, col, rows: span === 1 ? 1 : 2, cols });
     cursor = at + 1;
   }
   return out;
 }
 
-export function cellSpan(step: Step): 1 | 2 | 3 {
+export function cellSpan(step: Step): Span {
   if (step.callouts.length === 0 && step.inserts.length === 0 && step.loose.length <= BIG_LOOSE) return 1;
-  return planCell(step, 2).fits ? 2 : 3;
+  if (planCell(step, 2).fits) return 2;
+  return planCell(step, 4).fits ? 4 : 3;
 }
 
 function stepPages(section: Section): Page[] {
