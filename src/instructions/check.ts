@@ -13,15 +13,23 @@ export interface Finding {
 }
 export interface CheckResult { findings: Finding[]; accepted: Placement[]; blocked: boolean }
 export const POS_TOLERANCE = 0.5;   // LDU
-const LARGE_STEP = 8;
+/** LDU an axial connection (pin, axle, bar) may sit along its partner's axis: one stud-length insertion. */
+export const AXIAL_REACH = 20;
 const OVERLAP_SHARE = 0.5;          // shared cells / smaller part's cells for a blocking overlap
 const OFF_GRID_REACH = 20;          // LDU, lateral reach of an off-grid near miss
 const PARALLEL = 0.99;
 const SAME_SIDE_EPS = 1e-6;          // LDU², centre-side product above this = same side of a mate
 const CELL: Vec3 = [20, 8, 20];
+const CLUSTER_LIST = 5;             // parts named in a floating finding
+/** Connection pairs that join along an axis: the points may sit apart along it, as a pin's middle sits off a hole's centre. */
+const AXIAL = new Set([
+  'pin|pin_hole', 'pin_hole|pin', 'axle|axle_hole', 'axle_hole|axle', 'axle|pin_hole', 'pin_hole|axle',
+  'bar|bar_holder', 'bar_holder|bar', 'bar|clip', 'clip|bar',
+]);
+const AXIAL_TYPES = new Set<ConnectionType>(['pin', 'pin_hole', 'axle', 'axle_hole', 'bar', 'bar_holder', 'clip']);
 
 interface Box { min: Vec3; max: Vec3 }
-interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3 }
+interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3; owner: Placed }
 /** A placement with its geometry resolved into the checking frame. */
 interface Placed {
   p: Placement; geom: PartGeom | null; conns: Conn[] | null;
@@ -49,6 +57,12 @@ const parallel = (a: Vec3, b: Vec3) => {
   const n = norm(a) * norm(b);
   return n > 0 && Math.abs(dot(a, b)) / n > PARALLEL;
 };
+/** Offset of `d` along the axis `dir`, and its distance from that axis. */
+function split(d: Vec3, dir: Vec3): { along: number; lateral: number } {
+  const axis = dir.map((v) => v / norm(dir)) as Vec3;
+  const along = dot(d, axis);
+  return { along, lateral: norm(sub(d, axis.map((v) => v * along) as Vec3)) };
+}
 
 /** The world AABB of the part-local box `min..max` under `rot`/`pos`. */
 function worldBox(rot: Mat3, pos: Vec3, min: Vec3, max: Vec3): Box {
@@ -64,11 +78,22 @@ const shrink = (b: Box): Box => ({
   min: b.min.map((v) => v + POS_TOLERANCE) as Vec3,
   max: b.max.map((v) => v - POS_TOLERANCE) as Vec3,
 });
+const grown = (b: Box): Box => ({
+  min: b.min.map((v) => v - POS_TOLERANCE) as Vec3,
+  max: b.max.map((v) => v + POS_TOLERANCE) as Vec3,
+});
 const intersects = (a: Box, b: Box) =>
   a.min[0] < b.max[0] && b.min[0] < a.max[0] &&
   a.min[1] < b.max[1] && b.min[1] < a.max[1] &&
   a.min[2] < b.max[2] && b.min[2] < a.max[2];
+/** Touch or intersect within POS_TOLERANCE. */
+const touches = (a: Box, b: Box) =>
+  a.min[0] <= b.max[0] + POS_TOLERANCE && b.min[0] <= a.max[0] + POS_TOLERANCE &&
+  a.min[1] <= b.max[1] + POS_TOLERANCE && b.min[1] <= a.max[1] + POS_TOLERANCE &&
+  a.min[2] <= b.max[2] + POS_TOLERANCE && b.min[2] <= a.max[2] + POS_TOLERANCE;
 const axisAligned = (rot: Mat3) => rot.every((v) => Math.abs(v) < 1e-6 || Math.abs(Math.abs(v) - 1) < 1e-6);
+const around = (v: Vec3, r: number): Box => ({ min: v.map((n) => n - r) as Vec3, max: v.map((n) => n + r) as Vec3 });
+const center = (b: Box): Vec3 => [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
 
 /** Shrunk world boxes of every filled grid cell. */
 function cellBoxes(q: Placed): Box[] {
@@ -87,20 +112,21 @@ function cellBoxes(q: Placed): Box[] {
 
 function resolve(p: Placement, geom: GeometrySource): Placed {
   const g = geom.get(p.part);
-  return {
-    p, geom: g,
-    conns: g?.connections?.map((c) => ({ type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction) })) ?? null,
+  const q: Placed = {
+    p, geom: g, conns: null,
     box: g ? shrink(worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max)) : null,
     hull: g ? worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max) : { min: p.pos, max: p.pos },
   };
+  q.conns = g?.connections?.map((c) => ({ type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction), owner: q })) ?? null;
+  return q;
 }
 
 interface StepUnits {
   number: number;
+  name: string;            // how a floating finding names this step, e.g. 'step 4'
   units: Placement[][];
   loose: number;           // units[0 .. loose) are loose parts; the rest are callout or insert groups
   free: boolean[];         // per unit: its own reference line was accepted, so its attachment is not checked
-  size: number;
   label: (unit: number) => string;
 }
 
@@ -131,6 +157,7 @@ class SpatialHash<T> {
 }
 
 const fmt = (v: Vec3) => `(${v.map((n) => Math.round(n * 100) / 100).join(', ')})`;
+const named = (p: Placement) => `${p.part} (color ${p.color}) at ${fmt(p.pos)}`;
 
 /**
  * Checks every build step: each new part (or callout / insert group) must connect to the model
@@ -141,39 +168,45 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
   const accepted = new Set<Placement>();
   const checkedCallouts = new Set<string>();
 
-  const report = (kind: FindingKind, section: string, step: number, p: Placement, what: string) => {
-    findings.push({
+  const report = (kind: FindingKind, section: string, step: number, p: Placement, what: string): Finding => {
+    const f: Finding = {
       kind, blocking: BLOCKING[kind], section, step, part: p.part, color: p.color, pos: p.pos, source: p.source,
-      message: `Step ${step}: ${p.part} (color ${p.color}) at ${fmt(p.pos)} ${what}.`,
-    });
+      message: `Step ${step}: ${named(p)} ${what}.`,
+    };
+    findings.push(f);
+    return f;
   };
-
-  const compatibleTouch = (a: Conn, b: Conn) => geom.compatible(a.type, b.type);
-  const touching = (a: Conn, b: Conn) =>
-    compatibleTouch(a, b) && norm(sub(a.pos, b.pos)) <= POS_TOLERANCE && parallel(a.dir, b.dir);
-  const nearby = (a: Conn, b: Conn) => {
-    if (!compatibleTouch(a, b) || !parallel(a.dir, b.dir)) return false;
-    const d = sub(a.pos, b.pos);
-    const axis = b.dir.map((v) => v / norm(b.dir)) as Vec3;
-    const along = dot(d, axis);
-    const lateral = norm(sub(d, axis.map((v) => v * along) as Vec3));
-    return Math.abs(along) <= POS_TOLERANCE && lateral < OFF_GRID_REACH;
-  };
-  const around = (v: Vec3, r: number): Box => ({ min: v.map((n) => n - r) as Vec3, max: v.map((n) => n + r) as Vec3 });
-  const anyConn = (q: Placed, index: SpatialHash<Conn>, r: number, test: (a: Conn, b: Conn) => boolean) =>
-    q.conns!.some((a) => index.query(around(a.pos, r)).some((b) => test(a, b)));
 
   /**
-   * True when the two parts mate through a compatible connection with each other: the points touch,
-   * and the parts sit on opposite sides of the connection plane. The side test rejects a part turned
-   * over into its mate, and works whether the data's mating directions are parallel or anti-parallel
-   * (the parts DB points studs and receptors outward, so a real mate is anti-parallel). Only both
-   * centres strictly on the same side rejects a mate: centred axial snaps (pins, axles, bars) put the
-   * point on a part's midplane, so a product of about 0 still counts as mated.
+   * True when two connection points join: compatible types and parallel directions, and either the
+   * points coincide, or (for an axial pair) the axes line up and the points sit at most AXIAL_REACH
+   * apart along them.
    */
-  const center = (b: Box): Vec3 => [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+  const joins = (a: Conn, b: Conn) => {
+    if (!geom.compatible(a.type, b.type) || !parallel(a.dir, b.dir)) return false;
+    const d = sub(a.pos, b.pos);
+    if (!AXIAL.has(`${a.type}|${b.type}`)) return norm(d) <= POS_TOLERANCE;
+    const { along, lateral } = split(d, b.dir);
+    return lateral <= POS_TOLERANCE && Math.abs(along) <= AXIAL_REACH + POS_TOLERANCE;
+  };
+  const reach = (a: Conn) => AXIAL_TYPES.has(a.type) ? AXIAL_REACH + POS_TOLERANCE : POS_TOLERANCE;
+  const nearby = (a: Conn, b: Conn) => {
+    if (!geom.compatible(a.type, b.type) || !parallel(a.dir, b.dir)) return false;
+    const { along, lateral } = split(sub(a.pos, b.pos), b.dir);
+    return Math.abs(along) <= POS_TOLERANCE && lateral < OFF_GRID_REACH;
+  };
+
+  /**
+   * True when the two parts mate through a compatible connection with each other. An axial pair
+   * that joins is a mate (the pin sits inside the hole). Otherwise the points must touch and the
+   * parts sit on opposite sides of the connection plane. The side test rejects a part turned over
+   * into its mate, and works whether the data's mating directions are parallel or anti-parallel
+   * (the parts DB points studs and receptors outward, so a real mate is anti-parallel). Only both
+   * centres strictly on the same side rejects a mate.
+   */
   const mated = (q: Placed, o: Placed) => !!q.conns && !!o.conns && q.conns.some((a) => o.conns!.some((b) =>
-    touching(a, b) && dot(sub(center(q.hull), a.pos), a.dir) * dot(sub(center(o.hull), a.pos), a.dir) <= SAME_SIDE_EPS));
+    joins(a, b) && (AXIAL.has(`${a.type}|${b.type}`)
+      || dot(sub(center(q.hull), a.pos), a.dir) * dot(sub(center(o.hull), a.pos), a.dir) <= SAME_SIDE_EPS)));
 
   /**
    * Classifies one colliding pair. Parts that mate with each other are exempt. With grids, a blocking
@@ -190,81 +223,126 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
     if (shared === 0) return null;
     return shared >= OVERLAP_SHARE * small.length ? 'overlap' : 'possible';
   };
-  /** Touch or intersect within POS_TOLERANCE. */
-  const touches = (a: Box, b: Box) =>
-    a.min[0] <= b.max[0] + POS_TOLERANCE && b.min[0] <= a.max[0] + POS_TOLERANCE &&
-    a.min[1] <= b.max[1] + POS_TOLERANCE && b.min[1] <= a.max[1] + POS_TOLERANCE &&
-    a.min[2] <= b.max[2] + POS_TOLERANCE && b.min[2] <= a.max[2] + POS_TOLERANCE;
 
   /**
    * Checks one sequence of steps in one frame. Each step is a list of units; a unit is a loose part
-   * or one callout / insert instance, which passes when any member connects.
+   * or one callout / insert instance, which passes when any member connects. Units that connect to
+   * nothing are reported as clusters: the units of one step that connect to each other.
    */
   const checkSteps = (section: string, steps: StepUnits[], collect: Set<Placement>) => {
     const conns = new SpatialHash<Conn>(OFF_GRID_REACH);   // connection points of placed parts
     const solids = new SpatialHash<Placed>(40);            // boxes of parts already overlap-checked
-    const contacts = new SpatialHash<Placed>(40);          // placed parts without connection data
-    let anchored = false;
-    for (const step of steps) {
-      if (step.size > LARGE_STEP) {
-        const first = step.units[0]![0]!;
-        report('large-step', section, step.number, first, `starts a step that adds ${step.size} parts (more than ${LARGE_STEP})`);
-      }
-      const units = step.units.map((parts, i) => ({ i, members: parts.map((p) => resolve(p, geom)) }));
+    const bodies = new SpatialHash<Placed>(40);            // hulls of placed parts
+    // Connectivity of placed parts (union-find), to say when a floating cluster joins the model.
+    const parent = new Map<Placed, Placed>();
+    const find = (q: Placed): Placed => {
+      let r = q;
+      while (parent.get(r)! !== r) r = parent.get(r)!;
+      parent.set(q, r);
+      return r;
+    };
+    let ground: Placed | null = null;
+    interface Cluster { finding: Finding; head: string; parts: Placement[]; rep: Placed; joined: { name: string; via: Placement } | null }
+    const clusters: Cluster[] = [];
 
-      // Per-part checks: accepted, unverified, and overlap with everything placed earlier,
-      // including earlier units of this step (but not members of the same unit).
+    for (const step of steps) {
+      const units = step.units.map((parts, i) => ({ i, members: parts.map((p) => resolve(p, geom)) })).filter((u) => u.members.length > 0);
+      type Unit = (typeof units)[number];
+      type Link = [Placed, Placed];   // [member, placed part it attaches to]
+
+      // Per-part overlap with everything placed earlier, including earlier units of this step (but
+      // not members of the same unit).
       for (const u of units) {
         for (const q of u.members) {
           if (q.p.accepted) { if (collect.has(q.p)) accepted.add(q.p); continue; }
-          if (!q.geom || !q.geom.connections) report('unverified', section, step.number, q.p, 'has no connection data, so its connection was not checked');
           if (!q.box) continue;
           for (const o of solids.query(q.box)) {
             const kind = overlap(q, o);
-            if (kind === 'overlap') report('overlap', section, step.number, q.p, `overlaps ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}`);
-            if (kind === 'possible') report('unverified', section, step.number, q.p, `has a possible overlap with ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, sharing less than half the smaller part's grid cells`);
-            if (kind === 'unchecked') report('unverified', section, step.number, q.p, `has a possible overlap with ${o.p.part} (color ${o.p.color}) at ${fmt(o.p.pos)}, which could not be checked cell by cell`);
+            if (kind === 'overlap') report('overlap', section, step.number, q.p, `overlaps ${named(o.p)}`);
+            if (kind === 'possible') report('unverified', section, step.number, q.p, `has a possible overlap with ${named(o.p)}, sharing less than half the smaller part's grid cells`);
+            if (kind === 'unchecked') report('unverified', section, step.number, q.p, `has a possible overlap with ${named(o.p)}, which could not be checked cell by cell`);
           }
         }
         for (const q of u.members) if (q.box) solids.add(q, q.box);
       }
 
-      // Connection: iterate to a fixpoint so same-step chains reach the model.
-      const checkable = (q: Placed) => !q.p.accepted && q.conns !== null;
-      const placeUnit = (u: (typeof units)[number]) => {
+      /** Links from a unit's connection points to placed connection points they join. */
+      const connLinks = (u: Unit): Link[] => {
+        const out: Link[] = [];
         for (const q of u.members) {
-          for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
-          if (!q.conns) contacts.add(q, q.hull);
+          for (const a of q.conns ?? []) {
+            for (const b of conns.query(around(a.pos, reach(a)))) if (joins(a, b)) out.push([q, b.owner]);
+          }
         }
+        return out;
       };
-      const grown = (b: Box): Box => ({ min: b.min.map((v) => v - POS_TOLERANCE) as Vec3, max: b.max.map((v) => v + POS_TOLERANCE) as Vec3 });
-      const contactOf = (u: (typeof units)[number]) => {
-        for (const q of u.members.filter(checkable)) {
-          const hit = contacts.query(grown(q.hull)).find((o) => touches(q.hull, o.hull));
+      /**
+       * A contact that stands in for a connection: a member with connection points resting on a
+       * placed part without connection data, or a member with geometry but no connection data
+       * resting on any placed part.
+       */
+      const contactOf = (u: Unit): { q: Placed; hit: Placed } | null => {
+        for (const q of u.members) {
+          if (!q.geom) continue;
+          const hit = bodies.query(grown(q.hull)).find((o) => (!q.conns || !o.conns) && touches(q.hull, o.hull));
           if (hit) return { q, hit };
         }
         return null;
       };
-      let pending: typeof units = [];
+      const noData = new Set<Placed>();   // members already reported for their missing connection data
+      const place = (u: Unit, links: Link[], toGround: boolean) => {
+        const first = u.members[0]!;
+        for (const q of u.members) parent.set(q, q);
+        for (const q of u.members) parent.set(find(q), find(first));
+        const joinCheck = (via: Placed) => {
+          for (const c of clusters) {
+            if (!c.joined && ground && find(c.rep) === find(ground)) c.joined = { name: step.name, via: via.p };
+          }
+        };
+        for (const [q, o] of links) {
+          const a = find(q);
+          const b = find(o);
+          if (a !== b) { parent.set(a, b); joinCheck(q); }
+        }
+        if (toGround) {
+          if (!ground) ground = first;
+          const a = find(first);
+          const b = find(ground);
+          if (a !== b) { parent.set(a, b); joinCheck(first); }
+        }
+        for (const q of u.members) {
+          for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
+          bodies.add(q, q.hull);
+        }
+      };
+      /** Reports each non-accepted member without connection data of a unit that was placed. */
+      const reportNoData = (u: Unit) => {
+        for (const q of u.members) {
+          if (q.conns || q.p.accepted || noData.has(q)) continue;
+          report('unverified', section, step.number, q.p, 'has no connection data, so its connection was not checked');
+        }
+      };
+
+      let pending: Unit[] = [];
       for (const u of units) {
         // An accepted loose part, or a group whose own reference line was accepted, is declared
-        // connected. Accepted parts inside a group are only non-checkable members: they never free it.
-        const free = !anchored                                  // the anchor
-          || step.free[u.i]!                                    // declared connected
-          || !u.members.some(checkable);                        // nothing to verify
-        anchored = true;
+        // connected. A group's members never free it, accepted or not: only its reference line does.
+        // A unit with no geometry at all has nothing to check.
+        const free = ground === null || step.free[u.i]! || !u.members.some((q) => q.geom);
         if (step.free[u.i] && u.i >= step.loose) for (const q of u.members) accepted.add(q.p);   // accepted group
-        if (free) placeUnit(u); else pending.push(u);
+        if (free) { place(u, connLinks(u), true); reportNoData(u); } else pending.push(u);
       }
-      // Real connections first; a unit that only rests against a part without connection data
-      // is placed as unverified, and the connection fixpoint then resumes from it.
+      // Real connections first; a unit that only rests against a part without connection data (or
+      // whose own part has none) is placed as unverified, and the connection fixpoint then resumes.
       for (;;) {
         let progress = true;
         while (progress && pending.length > 0) {
           progress = false;
           pending = pending.filter((u) => {
-            if (!u.members.filter(checkable).some((q) => anyConn(q, conns, POS_TOLERANCE, touching))) return true;
-            placeUnit(u);
+            const links = connLinks(u);
+            if (links.length === 0) return true;
+            place(u, links, false);
+            reportNoData(u);
             progress = true;
             return false;
           });
@@ -272,25 +350,54 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         const rescued = pending.map((u) => ({ u, c: contactOf(u) })).filter((x) => x.c);
         if (rescued.length === 0) break;
         for (const { u, c } of rescued) {
-          report('unverified', section, step.number, c!.q.p,
-            `${step.label(u.i)}does not connect through known connection points but touches ${c!.hit.p.part} (color ${c!.hit.p.color}) at ${fmt(c!.hit.p.pos)}, which has no connection data`);
-          placeUnit(u);
+          const { q, hit } = c!;
+          noData.add(q);
+          report('unverified', section, step.number, q.p, q.conns
+            ? `${step.label(u.i)}does not connect through known connection points but touches ${named(hit.p)}, which has no connection data`
+            : `${step.label(u.i)}has no connection data but touches ${named(hit.p)}, so its connection was not checked`);
+          place(u, [[q, hit]], false);
+          reportNoData(u);
         }
         pending = pending.filter((u) => !rescued.some((x) => x.u === u));
       }
+
+      // What is left connects to nothing placed. Units that join each other form one cluster.
+      const near = new Set(pending.filter((u) => u.members.some((q) =>
+        q.conns?.some((a) => conns.query(around(a.pos, OFF_GRID_REACH)).some((b) => nearby(a, b))))));
       for (const u of pending) {
-        const members = u.members.filter(checkable);
-        const near = members.some((q) => anyConn(q, conns, OFF_GRID_REACH, nearby));
-        const label = step.label(u.i);
-        report(near ? 'off-grid' : 'floating', section, step.number, members[0]!.p,
-          near ? `${label}is off the stud grid by less than one stud` : `${label}does not connect to the model`);
+        const c = contactOf(u);
+        place(u, c ? [...connLinks(u), [c.q, c.hit]] : connLinks(u), false);
       }
-      for (const u of pending) placeUnit(u);
+      const groups = new Map<Placed, Unit[]>();
+      for (const u of pending) {
+        const r = find(u.members[0]!);
+        groups.set(r, [...(groups.get(r) ?? []), u]);
+      }
+      for (const [rep, group] of groups) {
+        const parts = group.flatMap((u) => u.members.map((q) => q.p));
+        const firstMember = group[0]!.members.find((q) => q.conns) ?? group[0]!.members.find((q) => q.geom) ?? group[0]!.members[0]!;
+        const labels = new Set(group.map((u) => step.label(u.i)));
+        const label = labels.size === 1 ? [...labels][0]! : '';
+        const offGrid = group.some((u) => near.has(u));
+        const count = parts.length === 1 ? '1 part' : `${parts.length} parts`;
+        const listed = parts.slice(0, CLUSTER_LIST).map(named).join(', ')
+          + (parts.length > CLUSTER_LIST ? `, and ${parts.length - CLUSTER_LIST} more` : '');
+        const head = `Step ${step.number}: ${count} ${label}${parts.length === 1 ? 'does' : 'do'} not connect to the model`
+          + `${offGrid ? ' (off the stud grid by less than one stud)' : ''}: ${listed}`;
+        const finding = report(offGrid ? 'off-grid' : 'floating', section, step.number, firstMember.p, '');
+        clusters.push({ finding, head, parts, rep, joined: null });
+      }
+    }
+    for (const c of clusters) {
+      const subject = c.parts.length === 1 ? 'it' : 'this group';
+      c.finding.message = c.joined
+        ? `${c.head}; ${subject} first joins the model in ${c.joined.name} via ${named(c.joined.via)}.`
+        : `${c.head}; ${subject} never joins the finished model.`;
     }
   };
 
   for (const section of model.sections) {
-    const steps = section.steps.map((step) => {
+    const steps = section.steps.map((step): StepUnits => {
       const units: Placement[][] = step.loose.map((p) => [p]);
       const labels: string[] = step.loose.map(() => '');
       const free: boolean[] = step.loose.map((p) => p.accepted);
@@ -307,9 +414,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
           offset += n;
         }
       }
-      // Inserted sections were checked in their own steps, so they don't count toward a large step.
-      const size = step.loose.length + step.callouts.reduce((n, c) => n + c.instances.flat().length, 0);
-      return { number: step.number, units, loose: step.loose.length, free, size, label: (u: number) => labels[u]! };
+      return { number: step.number, name: `step ${step.number}`, units, loose: step.loose.length, free, label: (u: number) => labels[u]! };
     });
     // Accepted parts are collected from loose parts and callout instances only, so each
     // build instruction counts once (inserts repeat a section already collected on its own).
@@ -321,8 +426,9 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
       for (const c of step.callouts) {
         if (checkedCallouts.has(c.file)) continue;
         checkedCallouts.add(c.file);
-        checkSteps(section.id, c.miniSteps.map((parts) => ({
-          number: step.number, units: parts.map((p) => [p]), loose: parts.length, free: parts.map((p) => p.accepted), size: 0, label: () => `(in callout ${c.file}) `,
+        checkSteps(section.id, c.miniSteps.map((parts, k) => ({
+          number: step.number, name: `mini-step ${k + 1} of callout ${c.file}`, units: parts.map((p) => [p]), loose: parts.length,
+          free: parts.map((p) => p.accepted), label: () => `(in callout ${c.file}) `,
         })), new Set());
       }
     }

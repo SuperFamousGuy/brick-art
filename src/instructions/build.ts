@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { ZipIndex } from '../render/zip-index.ts';
 import { printToPdf } from '../render/pdf.ts';
@@ -15,12 +15,26 @@ export interface InstructionsResult {
   status: 'built' | 'blocked';
   checked: boolean;                        // false when no parts database was available
   pdf: string | null;                      // null when blocked
-  steps: { number: number; section: string; text: string | null; png: string | null;
-           parts: { part: string; color: number; colorName: string | null; count: number }[] }[];
+  steps: StepRow[];
   findings: Finding[];
   accepted: { part: string; color: number; source: { file: string; line: number } }[];
   totalParts: number;
 }
+
+/**
+ * One build step for the `.md`. `parts` are the parts this step adds by hand: its loose parts and its
+ * callouts' parts (every instance). A sub-assembly added whole is listed in `inserts` instead, since
+ * its parts are counted in its own section's steps. Summed over all steps, each multiplied by
+ * `sectionQuantity` (how many times its section is built), the parts equal `totalParts`.
+ */
+export interface StepRow {
+  number: number; section: string; sectionQuantity: number; text: string | null; png: string | null;
+  parts: { part: string; color: number; colorName: string | null; count: number }[];
+  inserts: { section: string; quantity: number }[];
+}
+
+/** A step that adds more than this many parts (loose plus callout parts) gets a `large-step` warning. */
+export const LARGE_STEP = 8;
 
 const fmt = (v: number[]) => `(${v.map((n) => Number(n.toFixed(1))).join(', ')})`;
 
@@ -31,28 +45,51 @@ function finding(kind: Finding['kind'], section: string, step: number, p: Placem
   };
 }
 
-/** Parts of a step the booklet shows as loose or in callouts; inserted sub-assemblies are hidden inside by design. */
-function reportableCount(step: Step): number {
-  return step.loose.length + step.callouts.reduce((n, c) => n + c.instances.reduce((m, i) => m + i.length, 0), 0);
+/** Parts a step adds by hand: loose and callout parts. Inserted sub-assemblies were built in their own steps. */
+function reportableParts(step: Step): Placement[] {
+  return [...step.loose, ...step.callouts.flatMap((c) => c.instances.flat())];
 }
 
 /**
- * Adds a non-blocking `large-step` finding for each step too crowded to fit one page. A step the
- * check already reported as large gets the crowding note appended to that finding instead.
+ * Adds a non-blocking `large-step` finding for each step that adds more than LARGE_STEP parts (loose
+ * plus callout parts, not inserted sub-assemblies), or is too crowded to fit one page; one finding
+ * per step, naming both reasons when both apply. Runs with or without the connection check.
  */
-export function addCrowdedFindings(model: StepModel, findings: Finding[]): void {
+export function addStepSizeFindings(model: StepModel, findings: Finding[]): void {
   for (const section of model.sections) {
     for (const step of section.steps) {
-      if (planCell(step, 3).fits) continue;
-      const existing = findings.find((f) => f.kind === 'large-step' && f.section === section.id && f.step === step.number);
-      if (existing) {
-        existing.message = `${existing.message.replace(/\.$/, '')}; it is too crowded to fit one page.`;
-        continue;
-      }
+      const size = reportableParts(step).length;
+      const reasons = [
+        ...(size > LARGE_STEP ? [`adds ${size} parts (more than ${LARGE_STEP})`] : []),
+        ...(planCell(step, 3).fits ? [] : ['is too crowded to fit one page']),
+      ];
       const first = step.added[0];
-      if (first) findings.push(finding('large-step', section.id, step.number, first, 'starts a step that is too crowded to fit one page'));
+      if (reasons.length > 0 && first) {
+        findings.push(finding('large-step', section.id, step.number, first, `starts a step that ${reasons.join(' and ')}`));
+      }
     }
   }
+}
+
+/** The per-step rows of the tool result, from the same parse as the booklet. */
+export function stepRows(model: StepModel, colorNames: Map<number, string>, shots: Map<string, { png: string }> | null): StepRow[] {
+  const digits = stepDigits(model);
+  return model.sections.flatMap((section) => section.steps.map((step) => {
+    const counts = new Map<string, StepRow['parts'][number]>();
+    for (const p of reportableParts(step)) {
+      const part = p.part.replace(/\.dat$/, '');
+      const key = `${part}\u0000${p.color}`;
+      const row = counts.get(key) ?? { part, color: p.color, colorName: colorNames.get(p.color) ?? null, count: 0 };
+      row.count++;
+      counts.set(key, row);
+    }
+    return {
+      number: step.number, section: section.id, sectionQuantity: section.quantity, text: step.text,
+      png: shots?.get(stepShotName(step.number, digits))?.png ?? null,
+      parts: [...counts.values()],
+      inserts: step.inserts.map((i) => ({ section: i.sectionId, quantity: i.quantity })),
+    };
+  }));
 }
 
 /**
@@ -73,29 +110,14 @@ export async function buildInstructions(opts: {
   const findings: Finding[] = check ? [...check.findings] : [];
   const accepted = (check?.accepted ?? []).map((p) => ({ part: p.part, color: p.color, source: p.source }));
 
-  addCrowdedFindings(model, findings);
+  addStepSizeFindings(model, findings);
 
-  const stepRows = (shots: Map<string, { png: string }> | null) => {
-    const digits = stepDigits(model);
-    return model.sections.flatMap((section) => section.steps.map((step) => {
-      const counts = new Map<string, { part: string; color: number; colorName: string | null; count: number }>();
-      for (const p of step.added) {
-        const part = p.part.replace(/\.dat$/, '');
-        const key = `${part}\u0000${p.color}`;
-        const row = counts.get(key) ?? { part, color: p.color, colorName: colorNames.get(p.color) ?? null, count: 0 };
-        row.count++;
-        counts.set(key, row);
-      }
-      return {
-        number: step.number, section: section.id, text: step.text,
-        png: shots?.get(stepShotName(step.number, digits))?.png ?? null,
-        parts: [...counts.values()],
-      };
-    }));
-  };
+  // A PDF left from an earlier run must not pass for this one, whether this run prints or not.
+  const pdf = join(outDir, `${model.stem}-instructions.pdf`);
+  await rm(pdf, { force: true });
 
   if (check?.blocked) {
-    return { status: 'blocked', checked, pdf: null, steps: stepRows(null), findings, accepted, totalParts: model.totalParts };
+    return { status: 'blocked', checked, pdf: null, steps: stepRows(model, colorNames, null), findings, accepted, totalParts: model.totalParts };
   }
 
   const shots = await renderShots({
@@ -104,7 +126,7 @@ export async function buildInstructions(opts: {
   const digits = stepDigits(model);
   for (const section of model.sections) {
     for (const step of section.steps) {
-      const limit = reportableCount(step);
+      const limit = reportableParts(step).length;
       for (const i of shots.get(stepShotName(step.number, digits))?.hiddenParts ?? []) {
         const p = step.added[i];
         if (p && i < limit) findings.push(finding('unverified', section.id, step.number, p, 'new part is hidden from the camera'));
@@ -116,8 +138,7 @@ export async function buildInstructions(opts: {
   await mkdir(work, { recursive: true });
   const htmlPath = join(work, 'booklet.html');
   await writeFile(htmlPath, bookletHtml({ model, pages: layoutBooklet(model), shots, checked, colorNames }));
-  const pdf = join(outDir, `${model.stem}-instructions.pdf`);
   await printToPdf({ htmlPath, pdfPath: pdf, browser: opts.browser, timeoutMs: opts.timeoutMs });
 
-  return { status: 'built', checked, pdf, steps: stepRows(shots), findings, accepted, totalParts: model.totalParts };
+  return { status: 'built', checked, pdf, steps: stepRows(model, colorNames, shots), findings, accepted, totalParts: model.totalParts };
 }

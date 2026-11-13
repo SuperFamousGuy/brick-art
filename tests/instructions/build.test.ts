@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { addCrowdedFindings, buildInstructions } from '../../src/instructions/build.ts';
+import { addStepSizeFindings, buildInstructions, stepRows } from '../../src/instructions/build.ts';
+import { parseSteps } from '../../src/instructions/steps.ts';
 import type { GeometrySource, PartGeom } from '../../src/instructions/geometry.ts';
 import { findBrowser } from '../../src/render/browser.ts';
 import { ZipIndex } from '../../src/render/zip-index.ts';
@@ -48,6 +49,71 @@ test('blocked model renders nothing', async () => {
   assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.png') || f.endsWith('.pdf')), []);
 });
 
+test('a blocked run removes a stale PDF from an earlier run', async () => {
+  const { dir, library, modelPath } = setup([line(4, 0, 0, 0), '0 STEP', line(4, 500, -300, 500)]);
+  const stale = join(dir, 'model-instructions.pdf');
+  writeFileSync(stale, '%PDF-1.4 old');
+  const r = await buildInstructions({ modelPath, browser: 'unused', library, geometry });
+  assert.equal(r.status, 'blocked');
+  assert.equal(existsSync(stale), false);
+});
+
+test('per-step parts count loose and callout parts once, and list inserted sections', () => {
+  // main: a loose box, a 2-part callout placed twice, then a 9-part section inserted whole.
+  const tower = Array.from({ length: 9 }, (_, i) => [line(1, 0, -24 * i, 0), '0 STEP']).flat();
+  const { dir, library, modelPath } = setup([
+    line(4, 0, 0, 0), '0 STEP',
+    '1 14 0 -24 0 1 0 0 0 1 0 0 0 1 pair.ldr', '1 14 40 -24 0 1 0 0 0 1 0 0 0 1 pair.ldr', '0 STEP',
+    '1 2 0 -72 0 1 0 0 0 1 0 0 0 1 tower.ldr',
+  ]);
+  writeFileSync(join(dir, 'pair.ldr'), [line(16, 0, 0, 0), '0 STEP', line(16, 0, -24, 0)].join('\n') + '\n');
+  writeFileSync(join(dir, 'tower.ldr'), tower.join('\n') + '\n');
+  const model = parseSteps(modelPath, { isLibraryPart: (f) => library.has(`parts/${f}`) || f.endsWith('.dat') });
+  const rows = stepRows(model, new Map(), null);
+  const sum = rows.reduce((n, r) => n + r.sectionQuantity * r.parts.reduce((m, p) => m + p.count, 0), 0);
+  assert.equal(model.totalParts, 1 + 4 + 9);
+  assert.equal(sum, model.totalParts);
+  const callout = rows.find((r) => r.section === 'model' && r.parts.some((p) => p.color === 14))!;
+  assert.deepEqual(callout.parts.map((p) => p.count), [4]);
+  const insert = rows.find((r) => r.inserts.length > 0)!;
+  assert.deepEqual(insert.inserts, [{ section: 'tower', quantity: 1 }]);
+  assert.deepEqual(insert.parts, []);
+});
+
+test('per-step parts times section quantity equal the total for a section built twice', () => {
+  const tower = Array.from({ length: 9 }, (_, i) => [line(1, 0, -24 * i, 0), '0 STEP']).flat();
+  const { dir, library, modelPath } = setup([
+    line(4, 0, 0, 0), '0 STEP', '1 2 0 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr', '1 2 100 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr',
+  ]);
+  writeFileSync(join(dir, 'tower.ldr'), tower.join('\n') + '\n');
+  const model = parseSteps(modelPath, { isLibraryPart: (f) => library.has(`parts/${f}`) || f.endsWith('.dat') });
+  const rows = stepRows(model, new Map(), null);
+  assert.equal(rows.find((r) => r.section === 'tower')!.sectionQuantity, 2);
+  assert.deepEqual(rows.find((r) => r.inserts.length > 0)!.inserts, [{ section: 'tower', quantity: 2 }]);
+  const sum = rows.reduce((n, r) => n + r.sectionQuantity * r.parts.reduce((m, p) => m + p.count, 0), 0);
+  assert.equal(sum, model.totalParts);
+  assert.equal(model.totalParts, 19);
+});
+
+test('a step adding more than 8 parts warns, without the database too', () => {
+  const { library, modelPath } = setup([line(4, 0, 0, 0), '0 STEP', ...Array.from({ length: 9 }, (_, i) => line(4, 0, -24 * (i + 1), 0))]);
+  const model = parseSteps(modelPath, { isLibraryPart: (f) => library.has(`parts/${f}`) || f.endsWith('.dat') });
+  const findings: Finding[] = [];
+  addStepSizeFindings(model, findings);
+  assert.deepEqual(findings.map((f) => [f.kind, f.blocking, f.step]), [['large-step', false, 2]]);
+  assert.match(findings[0]!.message, /adds 9 parts \(more than 8\)/);
+});
+
+test('inserted section parts do not count toward a large step', () => {
+  const tower = Array.from({ length: 9 }, (_, i) => [line(1, 0, -24 * i, 0), '0 STEP']).flat();
+  const { dir, library, modelPath } = setup([line(4, 0, 0, 0), '0 STEP', '1 2 0 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr', line(4, 0, -240, 0)]);
+  writeFileSync(join(dir, 'tower.ldr'), tower.join('\n') + '\n');
+  const model = parseSteps(modelPath, { isLibraryPart: (f) => library.has(`parts/${f}`) || f.endsWith('.dat') });
+  const findings: Finding[] = [];
+  addStepSizeFindings(model, findings);
+  assert.deepEqual(findings, []);
+});
+
 test('no database means checked false', { skip: noBrowser, timeout: 240_000 }, async () => {
   const { library, modelPath } = setup([line(4, 0, 0, 0), '0 STEP', line(4, 0, -24, 0)]);
   const r = await buildInstructions({ modelPath, browser: browser!, library, geometry: null });
@@ -75,23 +141,18 @@ test('a crowded step yields exactly one large-step finding', () => {
   const step = crowdedStep();
   assert.equal(planCell(step, 3).fits, false);
   const model = fakeModel([section('test', [step])]);
-  // Without the check (no geometry): one new finding.
   const none: Finding[] = [];
-  addCrowdedFindings(model, none);
+  addStepSizeFindings(model, none);
   assert.equal(none.length, 1);
   assert.equal(none[0]!.kind, 'large-step');
   assert.equal(none[0]!.blocking, false);
-  assert.match(none[0]!.message, /too crowded to fit one page/);
-  // With the check already reporting a large step: its message is extended, not duplicated.
-  const reported: Finding[] = [{ ...none[0]!, message: 'Step 1: 3001.dat (color 4) at (0, 0, 0) starts a step that adds 20 parts (more than 8).' }];
-  addCrowdedFindings(model, reported);
-  assert.equal(reported.length, 1);
-  assert.match(reported[0]!.message, /adds 20 parts.*too crowded to fit one page/);
+  // One loose part and 20 one-part callouts: both reasons, in one finding.
+  assert.match(none[0]!.message, /adds 21 parts \(more than 8\) and is too crowded to fit one page/);
 });
 
 test('a step that fits adds no finding', () => {
   const none: Finding[] = [];
-  addCrowdedFindings(fakeModel([section('test', [fakeStep(1)])]), none);
+  addStepSizeFindings(fakeModel([section('test', [fakeStep(1)])]), none);
   assert.deepEqual(none, []);
 });
 

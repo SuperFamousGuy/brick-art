@@ -9,6 +9,7 @@ import { headlessArgs } from './browser.ts';
 /** Prints an HTML file to a PDF with a headless Chromium-based browser, honoring the page's `@page` size and margins. */
 export async function printToPdf(opts: { htmlPath: string; pdfPath: string; browser: string; timeoutMs?: number }): Promise<void> {
   const pdfPath = resolve(opts.pdfPath);
+  await rm(pdfPath, { force: true });   // so an old file can't pass for a fresh print
   const profile = await mkdtemp(join(tmpdir(), 'brick-art-pdf-'));
   const args = headlessArgs(profile, 1056, 816, '').slice(0, -1);
   args.push(`--print-to-pdf=${pdfPath}`, '--no-pdf-header-footer', pathToFileURL(resolve(opts.htmlPath)).href);

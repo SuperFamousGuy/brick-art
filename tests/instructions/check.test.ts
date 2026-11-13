@@ -36,8 +36,27 @@ const PIN: PartGeom = {
   grid: [[[1], [1]]],
   connections: [{ type: 'pin', position: [0, 0, 0], direction: [0, 0, 1] }],
 };
+// A beam with a hole on its middle plane, and a pin whose connection point sits at its own middle,
+// so a seated pin's point is 10 LDU along the axis from the hole's.
+const BEAM: PartGeom = {
+  bounds: { min: [-10, -10, -10], max: [10, 10, 10] }, grid: null,
+  connections: [{ type: 'pin_hole', position: [0, 0, 0], direction: [0, 0, 1] }],
+};
+const LONGPIN: PartGeom = {
+  bounds: { min: [-6, -6, -20], max: [6, 6, 20] }, grid: null,
+  connections: [{ type: 'pin', position: [0, 0, 0], direction: [0, 0, 1] }],
+};
+// Two receptors 100 LDU apart, to bridge two separate studs.
+const BRIDGE: PartGeom = {
+  bounds: { min: [-10, 0, -10], max: [110, 24, 10] }, grid: null,
+  connections: [
+    { type: 'stud_receptor', position: [0, 24, 0], direction: [0, -1, 0] },
+    { type: 'stud_receptor', position: [100, 24, 0], direction: [0, -1, 0] },
+  ],
+};
 const PARTS: Record<string, PartGeom> = {
   'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB, 'outward.dat': OUTWARD, 'holed.dat': HOLED, 'pin.dat': PIN,
+  'beam.dat': BEAM, 'longpin.dat': LONGPIN, 'bridge.dat': BRIDGE,
 };
 const MATES = new Set(['stud|stud_receptor', 'stud_receptor|stud', 'pin|pin_hole', 'pin_hole|pin']);
 const geom: GeometrySource = {
@@ -72,6 +91,7 @@ test('floating brick is blocking', () => {
   assert.equal(f.step, 2);
   assert.match(f.message, /box\.dat/);
   assert.match(f.message, /-100/);
+  assert.match(f.message, /never joins the finished model/);
   assert.equal(r.blocked, true);
 });
 
@@ -118,12 +138,9 @@ test('accepted part is skipped', () => {
   assert.deepEqual(r.accepted[0]!.pos, [0, -100, 0]);
 });
 
-test('large step warns', () => {
+test('the check leaves step size to the booklet builder', () => {
   const r = check({ 'model.ldr': [box(), '0 STEP', ...Array.from({ length: 9 }, (_, i) => box(0, -24 * (i + 1)))] });
-  assert.deepEqual(r.findings.map((f) => f.kind), ['large-step']);
-  assert.equal(r.findings[0]!.blocking, false);
-  assert.equal(r.findings[0]!.step, 2);
-  assert.equal(r.blocked, false);
+  assert.deepEqual(r.findings, []);
 });
 
 test('callout group connects through any member', () => {
@@ -165,15 +182,6 @@ test('section steps are checked locally and the insert as a group', () => {
     'tower.ldr': tower,
   });
   assert.deepEqual(bad.findings.map((f) => [f.kind, f.section]), [['floating', 'model']]);
-});
-
-test('inserted section parts do not count toward a large step', () => {
-  const tower = Array.from({ length: 9 }, (_, i) => [box(0, -24 * i), '0 STEP']).flat();
-  const r = check({
-    'model.ldr': [box(), '0 STEP', '1 4 0 -24 0 1 0 0 0 1 0 0 0 1 tower.ldr', box(0, -240)],
-    'tower.ldr': tower,
-  });
-  assert.deepEqual(r.findings, []);
 });
 
 test('parts that mate with each other are exempt from overlap', () => {
@@ -240,4 +248,72 @@ test('a centred axial mate (pin in a hole) is exempt from overlap', () => {
   const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'holed.dat'), '0 STEP', box(0, 10, 0, undefined, 'pin.dat')] });
   assert.ok(!r.findings.some((f) => f.blocking), JSON.stringify(r.findings));
   assert.deepEqual(r.findings, []);
+});
+
+test('a part without connection data far from the model is floating', () => {
+  const r = check({ 'model.ldr': [box(), '0 STEP', box(0, -300, 0, undefined, 'blob.dat')] });
+  assert.deepEqual(r.findings.map((f) => [f.kind, f.blocking, f.part]), [['floating', true, 'blob.dat']]);
+  assert.equal(r.blocked, true);
+});
+
+test('a part without connection data touching the model is unverified', () => {
+  const r = check({ 'model.ldr': [box(), '0 STEP', box(0, -24, 0, undefined, 'blob.dat')] });
+  assert.deepEqual(r.findings.map((f) => [f.kind, f.blocking]), [['unverified', false]]);
+  assert.match(r.findings[0]!.message, /no connection data but touches box\.dat/);
+  assert.equal(r.blocked, false);
+});
+
+test('accepted members do not free a callout far from the model', () => {
+  const r = check({
+    'model.ldr': [box(), '0 STEP', '1 4 300 0 0 1 0 0 0 1 0 0 0 1 pair.ldr'],
+    'pair.ldr': ['0 !BRICKART CONNECTED', box(0, 0), '0 STEP', '0 !BRICKART CONNECTED', box(0, -24)],
+  });
+  const floating = r.findings.filter((f) => f.kind === 'floating');
+  assert.equal(floating.length, 1, JSON.stringify(r.findings));
+  assert.equal(floating[0]!.blocking, true);
+  assert.equal(floating[0]!.step, 2);
+  assert.match(floating[0]!.message, /2 parts \(in callout pair\.ldr\) do not connect/);
+  assert.equal(r.blocked, true);
+});
+
+test('a pin seated in a hole with its point 10 LDU along the axis connects without overlap', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'beam.dat'), '0 STEP', box(0, 0, 10, undefined, 'longpin.dat')] });
+  assert.deepEqual(r.findings, []);
+});
+
+test('a pin 1 LDU off the hole axis does not connect', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'beam.dat'), '0 STEP', box(1, 0, 10, undefined, 'longpin.dat')] });
+  assert.ok(r.findings.some((f) => f.kind === 'floating' && f.blocking), JSON.stringify(r.findings));
+  assert.equal(r.blocked, true);
+});
+
+test('a pin more than one stud along the hole axis does not connect', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'beam.dat'), '0 STEP', box(0, 0, 30, undefined, 'longpin.dat')] });
+  assert.ok(r.findings.some((f) => f.kind === 'floating'), JSON.stringify(r.findings));
+});
+
+test('floating parts that join each other are one finding naming the step they join in', () => {
+  const r = check({ 'model.ldr': [box(), box(100, 0), box(100, 24), '0 STEP', box(0, -24, 0, undefined, 'bridge.dat')] });
+  assert.equal(r.findings.length, 1, JSON.stringify(r.findings));
+  const f = r.findings[0]!;
+  assert.equal(f.kind, 'floating');
+  assert.equal(f.blocking, true);
+  assert.equal(f.step, 1);
+  assert.deepEqual(f.pos, [100, 0, 0]);
+  assert.match(f.message, /^Step 1: 2 parts do not connect to the model: box\.dat \(color 4\) at \(100, 0, 0\), box\.dat \(color 4\) at \(100, 24, 0\)/);
+  assert.match(f.message, /first joins the model in step 2 via bridge\.dat \(color 4\) at \(0, -24, 0\)/);
+});
+
+test('separate floating parts in one step are separate findings', () => {
+  const r = check({ 'model.ldr': [box(), '0 STEP', box(0, -300), box(300, 0)] });
+  assert.deepEqual(r.findings.map((f) => [f.kind, f.step]), [['floating', 2], ['floating', 2]]);
+  assert.ok(r.findings.every((f) => /^Step 2: 1 part does not connect/.test(f.message)));
+});
+
+test('a floating cluster lists at most five parts', () => {
+  const column = Array.from({ length: 7 }, (_, i) => box(300, -24 * i));
+  const r = check({ 'model.ldr': [box(), '0 STEP', ...column] });
+  assert.equal(r.findings.length, 1, JSON.stringify(r.findings));
+  assert.match(r.findings[0]!.message, /^Step 2: 7 parts do not connect/);
+  assert.match(r.findings[0]!.message, /, and 2 more; this group never joins the finished model\.$/);
 });
