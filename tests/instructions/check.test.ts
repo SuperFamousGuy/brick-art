@@ -46,6 +46,11 @@ const LONGPIN: PartGeom = {
   bounds: { min: [-6, -6, -20], max: [6, 6, 20] }, grid: null,
   connections: [{ type: 'pin', position: [0, 0, 0], direction: [0, 0, 1] }],
 };
+// An 8-stud axle whose single connection point sits at its middle and slides 80 LDU each way.
+const AXLE8: PartGeom = {
+  bounds: { min: [-3, -3, -80], max: [3, 3, 80] }, grid: null,
+  connections: [{ type: 'pin', position: [0, 0, 0], direction: [0, 0, 1], span: 80 }],
+};
 // Two receptors 100 LDU apart, to bridge two separate studs.
 const BRIDGE: PartGeom = {
   bounds: { min: [-10, 0, -10], max: [110, 24, 10] }, grid: null,
@@ -56,7 +61,7 @@ const BRIDGE: PartGeom = {
 };
 const PARTS: Record<string, PartGeom> = {
   'box.dat': BOX, 'studded.dat': STUDDED, 'blob.dat': BLOB, 'outward.dat': OUTWARD, 'holed.dat': HOLED, 'pin.dat': PIN,
-  'beam.dat': BEAM, 'longpin.dat': LONGPIN, 'bridge.dat': BRIDGE,
+  'beam.dat': BEAM, 'longpin.dat': LONGPIN, 'bridge.dat': BRIDGE, 'axle8.dat': AXLE8,
 };
 const MATES = new Set(['stud|stud_receptor', 'stud_receptor|stud', 'pin|pin_hole', 'pin_hole|pin']);
 const geom: GeometrySource = {
@@ -316,4 +321,32 @@ test('a floating cluster lists at most five parts', () => {
   assert.equal(r.findings.length, 1, JSON.stringify(r.findings));
   assert.match(r.findings[0]!.message, /^Step 2: 7 parts do not connect/);
   assert.match(r.findings[0]!.message, /, and 2 more; this group never joins the finished model\.$/);
+});
+
+test('a hole far along a sliding axle connects, in either placement order', () => {
+  const beamOnAxle = check({ 'model.ldr': [box(0, 0, 0, undefined, 'axle8.dat'), '0 STEP', box(0, 0, 60, undefined, 'beam.dat')] });
+  assert.deepEqual(beamOnAxle.findings, []);
+  const axleInBeam = check({ 'model.ldr': [box(0, 0, 60, undefined, 'beam.dat'), '0 STEP', box(0, 0, 0, undefined, 'axle8.dat')] });
+  assert.deepEqual(axleInBeam.findings, []);
+});
+
+test('a hole past the end of a sliding axle does not connect', () => {
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'axle8.dat'), '0 STEP', box(0, 0, 100, undefined, 'beam.dat')] });
+  assert.ok(r.findings.some((f) => f.kind === 'floating' && f.blocking), JSON.stringify(r.findings));
+});
+
+test('a part that never joins its section says so for the sub-assembly, not the model', () => {
+  const hull = ['0 hull', ...Array.from({ length: 9 }, (_, i) => box(0, -24 * i)), '0 STEP', box(0, -500)];
+  const r = check({ 'model.ldr': [box(0, 0, 0, undefined, 'hull.ldr')], 'hull.ldr': hull });
+  const f = r.findings.find((x) => x.kind === 'floating')!;
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.match(f.message, /do not connect to sub-assembly hull|does not connect to sub-assembly hull/);
+  assert.match(f.message, /never joins the finished sub-assembly hull\.$/);
+});
+
+test('a callout part that never joins says so for the callout', () => {
+  const r = check({ 'model.ldr': [box(), '0 STEP', box(0, -24, 0, undefined, 'pair.ldr')], 'pair.ldr': ['0 pair', box(), '0 STEP', box(0, -500)] });
+  const f = r.findings.find((x) => /mini-step/.test(x.message) || /callout pair\.ldr;|finished callout/.test(x.message));
+  assert.ok(f, JSON.stringify(r.findings));
+  assert.match(f!.message, /never joins the finished callout pair\.ldr\.$/);
 });

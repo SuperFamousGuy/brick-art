@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { slideSpan } from '../ldraw/snaps.ts';
 import type { Bounds, ConnectionType, Grid, Vec3 } from '../types.ts';
 
 export interface PartGeom {
@@ -6,8 +7,11 @@ export interface PartGeom {
   bounds: Bounds;
   /** [layer][z][x]; layer 0 = top (min y); cell = 20 x 8 x 20 LDU, anchored at bounds.min. */
   grid: Grid | null;
-  /** Null when the part has no connection data. */
-  connections: { type: ConnectionType; position: Vec3; direction: Vec3 }[] | null;
+  /**
+   * Null when the part has no connection data. `span` is set on a centred sliding cylinder (axle,
+   * bar, pin): half its length in LDU, so a partner may sit that far along the axis.
+   */
+  connections: { type: ConnectionType; position: Vec3; direction: Vec3; span?: number }[] | null;
 }
 
 export interface GeometrySource {
@@ -21,7 +25,7 @@ type Row = Record<string, any>;
 export function dbGeometry(db: DatabaseSync): GeometrySource {
   const byFile = db.prepare('SELECT * FROM parts WHERE lower(ldraw_file) = ?');
   const byNum = db.prepare('SELECT * FROM parts WHERE part_num = ?');
-  const conns = db.prepare('SELECT type, x, y, z, dx, dy, dz FROM connections WHERE part_num = ? ORDER BY id');
+  const conns = db.prepare('SELECT type, x, y, z, dx, dy, dz, raw FROM connections WHERE part_num = ? ORDER BY id');
   const compat = new Set(
     (db.prepare('SELECT a, b FROM connection_compat').all() as Row[]).map((r) => `${r.a}|${r.b}`),
   );
@@ -35,11 +39,15 @@ export function dbGeometry(db: DatabaseSync): GeometrySource {
       grid: p.grid == null ? null : (JSON.parse(p.grid) as Grid),
       connections:
         p.has_connections === 1
-          ? (conns.all(p.part_num) as Row[]).map((r) => ({
-              type: r.type as ConnectionType,
-              position: [r.x, r.y, r.z] as Vec3,
-              direction: [r.dx, r.dy, r.dz] as Vec3,
-            }))
+          ? (conns.all(p.part_num) as Row[]).map((r) => {
+              const span = typeof r.raw === 'string' ? slideSpan(r.raw) : 0;
+              return {
+                type: r.type as ConnectionType,
+                position: [r.x, r.y, r.z] as Vec3,
+                direction: [r.dx, r.dy, r.dz] as Vec3,
+                ...(span > 0 ? { span } : {}),
+              };
+            })
           : null,
     };
   }

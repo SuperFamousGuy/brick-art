@@ -13,7 +13,10 @@ export interface Finding {
 }
 export interface CheckResult { findings: Finding[]; accepted: Placement[]; blocked: boolean }
 export const POS_TOLERANCE = 0.5;   // LDU
-/** LDU an axial connection (pin, axle, bar) may sit along its partner's axis: one stud-length insertion. */
+/**
+ * LDU an axial connection (pin, axle, bar) may sit along its partner's axis: one stud-length
+ * insertion. A sliding connection's `span` widens this to the two spans added together.
+ */
 export const AXIAL_REACH = 20;
 const OVERLAP_SHARE = 0.5;          // shared cells / smaller part's cells for a blocking overlap
 const OFF_GRID_REACH = 20;          // LDU, lateral reach of an off-grid near miss
@@ -29,7 +32,7 @@ const AXIAL = new Set([
 const AXIAL_TYPES = new Set<ConnectionType>(['pin', 'pin_hole', 'axle', 'axle_hole', 'bar', 'bar_holder', 'clip']);
 
 interface Box { min: Vec3; max: Vec3 }
-interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3; owner: Placed }
+interface Conn { type: ConnectionType; pos: Vec3; dir: Vec3; span: number; owner: Placed }
 /** A placement with its geometry resolved into the checking frame. */
 interface Placed {
   p: Placement; geom: PartGeom | null; conns: Conn[] | null;
@@ -117,7 +120,9 @@ function resolve(p: Placement, geom: GeometrySource): Placed {
     box: g ? shrink(worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max)) : null,
     hull: g ? worldBox(p.rot, p.pos, g.bounds.min, g.bounds.max) : { min: p.pos, max: p.pos },
   };
-  q.conns = g?.connections?.map((c) => ({ type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction), owner: q })) ?? null;
+  q.conns = g?.connections?.map((c) => ({
+    type: c.type, pos: apply(p.rot, p.pos, c.position), dir: turn(p.rot, c.direction), span: c.span ?? 0, owner: q,
+  })) ?? null;
   return q;
 }
 
@@ -180,16 +185,19 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
   /**
    * True when two connection points join: compatible types and parallel directions, and either the
    * points coincide, or (for an axial pair) the axes line up and the points sit at most AXIAL_REACH
-   * apart along them.
+   * apart along them, or within both sliding spans for a long axle or bar.
    */
   const joins = (a: Conn, b: Conn) => {
     if (!geom.compatible(a.type, b.type) || !parallel(a.dir, b.dir)) return false;
     const d = sub(a.pos, b.pos);
     if (!AXIAL.has(`${a.type}|${b.type}`)) return norm(d) <= POS_TOLERANCE;
     const { along, lateral } = split(d, b.dir);
-    return lateral <= POS_TOLERANCE && Math.abs(along) <= AXIAL_REACH + POS_TOLERANCE;
+    return lateral <= POS_TOLERANCE && Math.abs(along) <= axialLimit(a, b) + POS_TOLERANCE;
   };
-  const reach = (a: Conn) => AXIAL_TYPES.has(a.type) ? AXIAL_REACH + POS_TOLERANCE : POS_TOLERANCE;
+  const axialLimit = (a: Conn, b: Conn) => Math.max(AXIAL_REACH, a.span + b.span);
+  /** Search radius for partners of `a`, given the longest sliding span among placed points. */
+  const reach = (a: Conn, maxSpan: number) =>
+    AXIAL_TYPES.has(a.type) ? Math.max(AXIAL_REACH, a.span + maxSpan) + POS_TOLERANCE : POS_TOLERANCE;
   const nearby = (a: Conn, b: Conn) => {
     if (!geom.compatible(a.type, b.type) || !parallel(a.dir, b.dir)) return false;
     const { along, lateral } = split(sub(a.pos, b.pos), b.dir);
@@ -229,8 +237,10 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
    * or one callout / insert instance, which passes when any member connects. Units that connect to
    * nothing are reported as clusters: the units of one step that connect to each other.
    */
-  const checkSteps = (section: string, steps: StepUnits[], collect: Set<Placement>) => {
+  /** `whole` names what the steps build, for messages: 'the model', 'sub-assembly hull', 'callout pair.ldr'. */
+  const checkSteps = (section: string, steps: StepUnits[], collect: Set<Placement>, whole: string) => {
     const conns = new SpatialHash<Conn>(OFF_GRID_REACH);   // connection points of placed parts
+    let maxSpan = 0;                                       // longest sliding span among them
     const solids = new SpatialHash<Placed>(40);            // boxes of parts already overlap-checked
     const bodies = new SpatialHash<Placed>(40);            // hulls of placed parts
     // Connectivity of placed parts (union-find), to say when a floating cluster joins the model.
@@ -271,7 +281,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         const out: Link[] = [];
         for (const q of u.members) {
           for (const a of q.conns ?? []) {
-            for (const b of conns.query(around(a.pos, reach(a)))) if (joins(a, b)) out.push([q, b.owner]);
+            for (const b of conns.query(around(a.pos, reach(a, maxSpan)))) if (joins(a, b)) out.push([q, b.owner]);
           }
         }
         return out;
@@ -311,7 +321,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
           if (a !== b) { parent.set(a, b); joinCheck(first); }
         }
         for (const q of u.members) {
-          for (const c of q.conns ?? []) conns.add(c, around(c.pos, 0));
+          for (const c of q.conns ?? []) { conns.add(c, around(c.pos, 0)); maxSpan = Math.max(maxSpan, c.span); }
           bodies.add(q, q.hull);
         }
       };
@@ -382,7 +392,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         const count = parts.length === 1 ? '1 part' : `${parts.length} parts`;
         const listed = parts.slice(0, CLUSTER_LIST).map(named).join(', ')
           + (parts.length > CLUSTER_LIST ? `, and ${parts.length - CLUSTER_LIST} more` : '');
-        const head = `Step ${step.number}: ${count} ${label}${parts.length === 1 ? 'does' : 'do'} not connect to the model`
+        const head = `Step ${step.number}: ${count} ${label}${parts.length === 1 ? 'does' : 'do'} not connect to ${whole}`
           + `${offGrid ? ' (off the stud grid by less than one stud)' : ''}: ${listed}`;
         const finding = report(offGrid ? 'off-grid' : 'floating', section, step.number, firstMember.p, '');
         clusters.push({ finding, head, parts, rep, joined: null });
@@ -391,8 +401,8 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
     for (const c of clusters) {
       const subject = c.parts.length === 1 ? 'it' : 'this group';
       c.finding.message = c.joined
-        ? `${c.head}; ${subject} first joins the model in ${c.joined.name} via ${named(c.joined.via)}.`
-        : `${c.head}; ${subject} never joins the finished model.`;
+        ? `${c.head}; ${subject} first joins ${whole} in ${c.joined.name} via ${named(c.joined.via)}.`
+        : `${c.head}; ${subject} never joins the finished ${whole.replace(/^the /, '')}.`;
     }
   };
 
@@ -419,7 +429,8 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
     // Accepted parts are collected from loose parts and callout instances only, so each
     // build instruction counts once (inserts repeat a section already collected on its own).
     const collectable = new Set(section.steps.flatMap((s) => [...s.loose, ...s.callouts.flatMap((c) => c.instances.flat())]));
-    checkSteps(section.id, steps, collectable);
+    const isMain = section === model.sections[model.sections.length - 1];
+    checkSteps(section.id, steps, collectable, isMain ? 'the model' : `sub-assembly ${section.id}`);
 
     // Callout mini-steps, in the submodel's local frame, once per submodel file.
     for (const step of section.steps) {
@@ -429,7 +440,7 @@ export function checkModel(model: StepModel, geom: GeometrySource): CheckResult 
         checkSteps(section.id, c.miniSteps.map((parts, k) => ({
           number: step.number, name: `mini-step ${k + 1} of callout ${c.file}`, units: parts.map((p) => [p]), loose: parts.length,
           free: parts.map((p) => p.accepted), label: () => `(in callout ${c.file}) `,
-        })), new Set());
+        })), new Set(), `callout ${c.file}`);
       }
     }
   }

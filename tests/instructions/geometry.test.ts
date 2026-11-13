@@ -19,6 +19,12 @@ function makeDb(): DatabaseSync {
   const c = db.prepare('INSERT INTO connections (part_num, type, x, y, z, dx, dy, dz) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   c.run('3001', 'stud', 10, -24, 0, 0, -1, 0);
   c.run('3001', 'stud_receptor', 10, 0, 0, 0, 1, 0);
+  db.prepare(
+    `INSERT INTO parts (part_num, ldraw_file, min_x, min_y, min_z, max_x, max_y, max_z, has_geometry, has_connections, has_grid)
+     VALUES ('3707', '3707.dat', -80, -3, -3, 80, 3, 3, 1, 1, 0)`,
+  ).run();
+  db.prepare('INSERT INTO connections (part_num, type, x, y, z, dx, dy, dz, raw) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('3707', 'axle', 0, 0, 0, 1, 0, 0, '0 !LDCAD SNAP_CYL [gender=M] [caps=none] [secs=A 6 160] [center=true] [slide=true] [ori=0 -1 0 1 0 0 0 0 1]');
   return db;
 }
 
@@ -41,4 +47,9 @@ test('missing connections is null, unknown part is null', () => {
   const s = dbGeometry(makeDb());
   assert.equal(s.get('3005.dat')?.connections, null);
   assert.equal(s.get('nope.dat'), null);
+});
+
+test('a sliding centred connection carries its half length as span', () => {
+  const g = dbGeometry(makeDb()).get('3707.dat');
+  assert.deepEqual(g?.connections, [{ type: 'axle', position: [0, 0, 0], direction: [1, 0, 0], span: 80 }]);
 });
