@@ -155,8 +155,9 @@ size. The totals must match the `render_model` tally.
 - **Non-blocking findings.** `unverified` means a connection could not be checked: no
   connection data but touching the model, a possible overlap, contact with a part that
   has no data, or a part hidden from the camera. A part with no connection data that
-  touches nothing is `floating`, not `unverified`. `large-step` means a step adds more than 8 parts or is too
-  crowded for one page. Report both kinds to the user, and split large steps when you can.
+  touches nothing is `floating`, not `unverified`. `large-step` means a step adds more than 8 parts
+  (a warning) or is too crowded for one page (blocking: the page would clip it, so split the
+  step). Report both kinds to the user, and split large steps when you can.
 - **Unchecked.** When `checked` is `false`, the parts database was not available and
   no connections were checked. Tell the user.
 

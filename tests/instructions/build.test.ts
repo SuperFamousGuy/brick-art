@@ -137,7 +137,7 @@ function crowdedStep() {
   return step;
 }
 
-test('a crowded step yields exactly one large-step finding', () => {
+test('a crowded step yields exactly one large-step finding, and it blocks', () => {
   const step = crowdedStep();
   assert.equal(planCell(step, 3).fits, false);
   const model = fakeModel([section('test', [step])]);
@@ -145,9 +145,20 @@ test('a crowded step yields exactly one large-step finding', () => {
   addStepSizeFindings(model, none);
   assert.equal(none.length, 1);
   assert.equal(none[0]!.kind, 'large-step');
-  assert.equal(none[0]!.blocking, false);
+  assert.equal(none[0]!.blocking, true);
   // One loose part and 20 one-part callouts: both reasons, in one finding.
   assert.match(none[0]!.message, /adds 21 parts \(more than 8\) and is too crowded to fit one page/);
+});
+
+test('a step too crowded for a page blocks the booklet, even without the parts database', async () => {
+  // One step placing a 6-mini-step callout in 20 colours: 20 callouts, more than a page can hold.
+  const { dir, library, modelPath } = setup(Array.from({ length: 20 }, (_, i) => `1 ${i + 1} ${i * 40} 0 0 1 0 0 0 1 0 0 0 1 six.ldr`));
+  writeFileSync(join(dir, 'six.ldr'), Array.from({ length: 6 }, (_, k) => `1 16 0 ${-24 * k} 0 1 0 0 0 1 0 0 0 1 box.dat\n0 STEP`).join('\n') + '\n');
+  const r = await buildInstructions({ modelPath, browser: 'unused', library, geometry: null });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.pdf, null);
+  assert.ok(r.findings.some((f) => f.kind === 'large-step' && f.blocking && /too crowded to fit one page/.test(f.message)), JSON.stringify(r.findings));
+  assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.png') || f.endsWith('.pdf')), []);
 });
 
 test('a step that fits adds no finding', () => {

@@ -51,21 +51,25 @@ function reportableParts(step: Step): Placement[] {
 }
 
 /**
- * Adds a non-blocking `large-step` finding for each step that adds more than LARGE_STEP parts (loose
- * plus callout parts, not inserted sub-assemblies), or is too crowded to fit one page; one finding
- * per step, naming both reasons when both apply. Runs with or without the connection check.
+ * Adds a `large-step` finding for each step that adds more than LARGE_STEP parts (loose plus callout
+ * parts, not inserted sub-assemblies), or is too crowded to fit one page; one finding per step,
+ * naming both reasons when both apply. Too many parts is a warning. Too crowded for a page blocks the
+ * booklet, because the page would clip it. Runs with or without the connection check.
  */
 export function addStepSizeFindings(model: StepModel, findings: Finding[]): void {
   for (const section of model.sections) {
     for (const step of section.steps) {
       const size = reportableParts(step).length;
+      const crowded = !planCell(step, 3).fits;
       const reasons = [
         ...(size > LARGE_STEP ? [`adds ${size} parts (more than ${LARGE_STEP})`] : []),
-        ...(planCell(step, 3).fits ? [] : ['is too crowded to fit one page']),
+        ...(crowded ? ['is too crowded to fit one page; split it into smaller steps or callouts'] : []),
       ];
       const first = step.added[0];
       if (reasons.length > 0 && first) {
-        findings.push(finding('large-step', section.id, step.number, first, `starts a step that ${reasons.join(' and ')}`));
+        const f = finding('large-step', section.id, step.number, first, `starts a step that ${reasons.join(' and ')}`);
+        f.blocking = crowded;
+        findings.push(f);
       }
     }
   }
@@ -116,7 +120,7 @@ export async function buildInstructions(opts: {
   const pdf = join(outDir, `${model.stem}-instructions.pdf`);
   await rm(pdf, { force: true });
 
-  if (check?.blocked) {
+  if (findings.some((f) => f.blocking)) {
     return { status: 'blocked', checked, pdf: null, steps: stepRows(model, colorNames, null), findings, accepted, totalParts: model.totalParts };
   }
 
