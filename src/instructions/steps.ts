@@ -226,11 +226,13 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
       if (!sub) { loose.push(placement(ref, file)); continue; }
       const instance = flatten(sub, ref.file, ref.frame, depth + 1).flat();
       if (instance.length <= CALLOUT_MAX_PARTS) {
-        let c = callouts.get(ref.file);
+        // Keyed by file and inherited colour, like sections, so each colour gets its own mini-steps.
+        const calloutKey = keyOf(ref.file, ref.frame.color);
+        let c = callouts.get(calloutKey);
         if (!c) {
           const miniSteps = flatten(sub, ref.file, { color: ref.frame.color, pos: ZERO, rot: IDENTITY }, depth + 1);
           c = { file: ref.file, quantity: 0, miniSteps, instances: [], attach: [], accepted: [] };
-          callouts.set(ref.file, c);
+          callouts.set(calloutKey, c);
         }
         c.quantity++;
         c.instances.push(instance);

@@ -151,6 +151,17 @@ test('color 16 inherits through callouts and sections', () => {
   assert.ok(m.parts.every((p) => p.color === 4));
 });
 
+test('one small submodel in two colours in one step gives one callout per colour', () => {
+  const m = parse({
+    'model.ldr': [part(4, 0, 0, 0, 'wheel.ldr'), part(1, 40, 0, 0, 'wheel.ldr'), part(4, 80, 0, 0, 'wheel.ldr')],
+    'wheel.ldr': ['0 wheel', part(16), part(0, 0, -8)],
+  });
+  const step = m.sections[0]!.steps[0]!;
+  assert.deepEqual(step.callouts.map((c) => c.quantity), [2, 1]);
+  assert.deepEqual(step.callouts.map((c) => c.miniSteps.flat().map((p) => p.color)), [[4, 0], [1, 0]]);
+  assert.deepEqual(step.callouts.map((c) => c.instances.map((i) => i[0]!.color)), [[4, 4], [1]]);
+});
+
 test('ROTSTEP sets the view', () => {
   const m = parse({
     'model.ldr': [part(4), '0 ROTSTEP 0 180 0 ABS', part(4, 0, -24), '0 ROTSTEP END', part(4, 0, -48)],
