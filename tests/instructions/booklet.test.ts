@@ -114,3 +114,37 @@ test('a one-callout step still fits a column', () => {
   assert.ok(plan.fits && plan.bottom + 0.1 <= plan.h);
   assert.equal(layoutBooklet(fakeModel([section('test', [step])]))[1]!.cells![0]!.span, 2);
 });
+
+test('a callout box has a parts strip with icons and counts for one instance', () => {
+  const step = fakeStep(1, { callouts: 1 });
+  const c = step.callouts[0]!;
+  const p = c.instances[0]![0]!;
+  c.instances = [[p, { ...p }, { ...p, part: '3002.dat', color: 1 }]];
+  c.quantity = 2;
+  const model = fakeModel([section('test', [step])]);
+  model.parts = [{ part: '3001', color: 4, count: 4 }, { part: '3002', color: 1, count: 2 }];
+  const plan = planCell(step, 2);
+  const b = plan.boxes[0]!;
+  assert.deepEqual(b.groups.map((g) => [g.part, g.color, g.count]), [['3001.dat', 4, 2], ['3002.dat', 1, 1]]);
+  assert.ok(b.strip > 0);
+  // The strip adds to the box height, so the box still fits the cell.
+  assert.ok(b.y + b.h <= plan.h && plan.fits);
+  const html = build(model);
+  const strip = /<div class="strip"[^>]*>(.*?)<\/div><div class="mini"/.exec(html)?.[1] ?? '';
+  assert.ok(strip.includes(`${iconShotName('3001', 4)}.png`) && strip.includes(`${iconShotName('3002', 1)}.png`), strip);
+  assert.ok(strip.includes('>2x<') && strip.includes('>1x<'), strip);
+});
+
+test('an attach mark outside the picture is clamped to its edge', () => {
+  const step = fakeStep(1, { callouts: 1 });
+  const model = fakeModel([section('test', [step])]);
+  const shots = shotsFor(model);
+  const name = stepShotName(1, stepDigits(model));
+  shots.set(name, { ...shots.get(name)!, marks: [[99999, -500]] });
+  const html = bookletHtml({ model, pages: layoutBooklet(model), shots, checked: true, colorNames: names });
+  const m = /<line class="arrow" x1="[^"]+" y1="[^"]+" x2="([^"]+)" y2="([^"]+)"/.exec(html)!;
+  const im = planCell(step, 2).img;
+  const [x2, y2] = [Number(m[1]), Number(m[2])];
+  assert.ok(x2 <= im.x + im.w + 1e-6 && x2 >= im.x, `x2 ${x2}`);
+  assert.ok(y2 >= im.y - 1e-6 && y2 <= im.y + im.h, `y2 ${y2}`);
+});

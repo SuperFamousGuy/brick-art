@@ -1,4 +1,4 @@
-import type { Step } from './steps.ts';
+import type { Placement, Step } from './steps.ts';
 
 // Geometry of a step cell, in inches. The content area of a sheet is 10.2 x 7.7.
 export const PAGE_W = 10.2;
@@ -14,6 +14,9 @@ export const BOX_X = 0.95;
 export const BOX_W = COL_W - BOX_X - PAD;
 export const ITEM_W = 0.52;
 export const ITEM_H = 0.6;
+/** A callout's parts strip: one instance's parts, smaller than the step's parts box. */
+export const STRIP_ITEM_W = 0.42;
+export const STRIP_ITEM_H = 0.48;
 const GAP = 0.08;
 const HEAD = 0.28;
 const BETWEEN = 0.1;
@@ -23,6 +26,8 @@ export interface Group { part: string; color: number; count: number }
 export interface CalloutBox {
   kind: 'callout' | 'insert'; i: number; qty: number; count: number; cols: number; rows: number;
   x: number; y: number; w: number; h: number; mw: number; mh: number; head: number; gap: number;
+  groups: Group[];   // a callout's parts for one instance, shown in a strip under the head (empty for an insert)
+  strip: number;     // height of that strip, 0 without one
 }
 export interface CellPlan {
   w: number; h: number; groups: Group[]; partsBoxH: number;
@@ -36,8 +41,13 @@ export function cellSize(span: 1 | 2 | 3): { w: number; h: number } {
 }
 
 export function groupLoose(step: Step): Group[] {
+  return groupParts(step.loose);
+}
+
+/** Parts counted by part and colour, in first-seen order. */
+export function groupParts(parts: Placement[]): Group[] {
   const counts = new Map<string, Group>();
-  for (const p of step.loose) {
+  for (const p of parts) {
     const key = `${p.part}\u0000${p.color}`;
     const row = counts.get(key) ?? { part: p.part, color: p.color, count: 0 };
     row.count++;
@@ -46,7 +56,7 @@ export function groupLoose(step: Step): Group[] {
   return [...counts.values()];
 }
 
-interface Item { kind: 'callout' | 'insert'; i: number; qty: number; n: number }
+interface Item { kind: 'callout' | 'insert'; i: number; qty: number; n: number; groups: Group[] }
 
 /** Lays out one step's parts box, image, and callout boxes in a cell, shrinking callout images (and gaps) until they fit. */
 export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
@@ -61,8 +71,10 @@ export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
   }
   const img = { x: PAD, y: boxBottom, w: IMG_W, h: IMG_H };
   const items: Item[] = [
-    ...step.callouts.map((c, i): Item => ({ kind: 'callout', i, qty: c.quantity, n: Math.max(1, c.miniSteps.length) })),
-    ...step.inserts.map((c, i): Item => ({ kind: 'insert', i, qty: c.quantity, n: 1 })),
+    ...step.callouts.map((c, i): Item => ({
+      kind: 'callout', i, qty: c.quantity, n: Math.max(1, c.miniSteps.length), groups: groupParts(c.instances[0] ?? c.miniSteps.flat()),
+    })),
+    ...step.inserts.map((c, i): Item => ({ kind: 'insert', i, qty: c.quantity, n: 1, groups: [] })),
   ];
   const side = span === 3;
   const colW = side ? (PAGE_W - COL_W - 0.3) / 2 : IMG_W;
@@ -76,7 +88,10 @@ export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
     const gap = GAP * s;
     const mw = Math.min(1.5, (colW - 2 * gap - (cols - 1) * gap) / cols) * s;
     const head = it.qty > 1 ? HEAD : 0;
-    return { cols, rows, gap, mw, mh: mw * 0.75, head, bh: 2 * gap + head + rows * mw * 0.75 + (rows - 1) * gap };
+    const perRow = Math.max(1, Math.floor((colW - 2 * GAP) / STRIP_ITEM_W));
+    const strip = it.groups.length > 0 ? Math.ceil(it.groups.length / perRow) * STRIP_ITEM_H : 0;
+    const bh = 2 * gap + head + (strip ? strip + gap : 0) + rows * mw * 0.75 + (rows - 1) * gap;
+    return { cols, rows, gap, mw, mh: mw * 0.75, head, strip, bh };
   };
   /** Column assignment and total height at a scale. */
   const arrange = (s: number) => {
@@ -100,6 +115,7 @@ export function planCell(step: Step, span: 1 | 2 | 3): CellPlan {
   const boxes: CalloutBox[] = arr.placed.map(({ it, d, lane, y }) => ({
     kind: it.kind, i: it.i, qty: it.qty, count: it.n, cols: d.cols, rows: d.rows,
     x: x0 + lane * (colW + 0.1), y, w: colW, h: d.bh, mw: d.mw, mh: d.mh, head: d.head, gap: d.gap,
+    groups: it.groups, strip: d.strip,
   }));
   const bottom = Math.max(img.y + img.h, items.length ? top0 + arr.used : 0);
   return { w, h, groups, partsBoxH, img, boxes, side, bottom, fits: bottom + PAD <= h + 1e-6 };

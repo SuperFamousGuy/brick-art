@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { BOX_W, BOX_X, COL_GAP, COL_W, ITEM_H, ITEM_W, PAD, ROW_GAP, ROW_H, planCell } from './cell-plan.ts';
+import {
+  BOX_W, BOX_X, COL_GAP, COL_W, ITEM_H, ITEM_W, PAD, ROW_GAP, ROW_H, STRIP_ITEM_H, STRIP_ITEM_W, planCell,
+} from './cell-plan.ts';
 import { PARTS_PER_PAGE, placeCells, type Cell, type Page } from './layout.ts';
 import {
   calloutShotName, DEFAULT_SHOT_SIZES, iconShotName, PIXEL_RATIO, stepDigits, stepShotName, type ShotResult,
@@ -9,6 +11,8 @@ import {
 import type { Section, Step, StepModel } from './steps.ts';
 
 const ICON = 0.38;
+const STRIP_ICON = 0.3;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const esc = (s: unknown) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const n = (v: number) => String(Number(v.toFixed(3)));
@@ -77,10 +81,16 @@ function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: numb
   for (const b of plan.boxes) {
     let inner = b.qty > 1 ? `<span class="qty" style="left:${n(b.gap)}in;top:0.02in">${b.qty}x</span>` : '';
     if (b.kind === 'callout') {
+      if (b.strip > 0) {
+        const items = b.groups.map((c) =>
+          `<div class="item" style="width:${n(STRIP_ITEM_W)}in;height:${n(STRIP_ITEM_H)}in">${icon(ctx, c.part, c.color, STRIP_ICON)}<span class="pq">${c.count}x</span></div>`).join('');
+        inner += `<div class="strip" style="left:${n(b.gap)}in;top:${n(b.gap + b.head)}in;width:${n(b.w - 2 * b.gap)}in;height:${n(b.strip)}in">${items}</div>`;
+      }
+      const top = b.gap + b.head + (b.strip > 0 ? b.strip + b.gap : 0);
       for (let k = 0; k < b.count; k++) {
         const m = ctx.shots.get(calloutShotName(step.number, ctx.digits, b.i + 1, k + 1));
         const cx = b.gap + (k % b.cols) * (b.mw + b.gap);
-        const cy = b.gap + b.head + Math.floor(k / b.cols) * (b.mh + b.gap);
+        const cy = top + Math.floor(k / b.cols) * (b.mh + b.gap);
         inner += `<div class="mini" style="left:${n(cx)}in;top:${n(cy)}in;width:${n(b.mw)}in;height:${n(b.mh)}in">${img(m, 'shot')}`
           + (b.count > 1 ? `<span class="mn">${k + 1}</span>` : '') + '</div>';
       }
@@ -94,8 +104,9 @@ function stepCell(ctx: Ctx, step: Step, cell: Cell, at: { row: number; col: numb
       for (let j = 0; j < count; j++) {
         const mark = attachMarks[markIx++];
         if (!mark) continue;
-        const ex = origin.x + mark[0] / pw * shown.w;
-        const ey = origin.y + mark[1] / ph * shown.h;
+        // A mark outside the picture (an attach point off camera) is pulled to the picture's edge.
+        const ex = clamp(origin.x + mark[0] / pw * shown.w, origin.x, origin.x + shown.w);
+        const ey = clamp(origin.y + mark[1] / ph * shown.h, origin.y, origin.y + shown.h);
         const [sx, sy] = plan.side ? [b.x, b.y + b.h * (j + 1) / (count + 1)] : [b.x + b.w * (j + 1) / (count + 1), b.y];
         over.push(`<line class="arrow" x1="${n(sx)}" y1="${n(sy)}" x2="${n(ex)}" y2="${n(ey)}" marker-end="url(#${id})"/>`);
       }
@@ -160,6 +171,8 @@ body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; color: #222;
 .icon { object-fit: contain; }
 .pq { font-size: 0.15in; font-weight: 700; line-height: 0.18in; }
 .mini { position: absolute; }
+.strip { position: absolute; display: flex; flex-wrap: wrap; align-content: flex-start; }
+.strip .pq { font-size: 0.12in; line-height: 0.14in; }
 .stepimg, .mini { background: #fff; border-radius: 0.05in; overflow: hidden; }
 .shot { width: 100%; height: 100%; object-fit: contain; display: block; }
 .callout { background: #fff7e0; border: 0.02in solid #c8b27a; border-radius: 0.08in; }

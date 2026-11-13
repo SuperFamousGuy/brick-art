@@ -20,7 +20,7 @@ export interface Callout {
   quantity: number;          // instances of this submodel placed in this step
   miniSteps: Placement[][];  // the submodel's own steps, in the submodel's local frame
   instances: Placement[][];  // world-frame parts of each instance, in placement order
-  attach: Vec3[];            // world origin of each instance
+  attach: Vec3[];            // world attach point of each instance: the centroid of its part positions
   accepted: boolean[];       // per instance: its reference line was preceded by 0 !BRICKART CONNECTED
 }
 export interface Insert {
@@ -75,6 +75,13 @@ function placement(ref: Ref, file: string): Placement {
     part: ref.file, color: ref.frame.color, pos: ref.frame.pos, rot: ref.frame.rot,
     source: { file, line: ref.line }, accepted: ref.accepted,
   };
+}
+
+/** Mean position of the parts, or `fallback` when there are none. */
+function centroid(parts: Placement[], fallback: Vec3): Vec3 {
+  if (parts.length === 0) return fallback;
+  const sum = parts.reduce<Vec3>((a, p) => [a[0] + p.pos[0], a[1] + p.pos[1], a[2] + p.pos[2]], [0, 0, 0]);
+  return sum.map((v) => v / parts.length) as Vec3;
 }
 
 function titleOf(lines: string[]): string | null {
@@ -134,7 +141,8 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
         else if (rest.startsWith('//') && rest.slice(2).trim()) out.push({ kind: 'text', text: rest.slice(2).trim() });
         return;
       }
-      if (t[0] !== '1' || t.length < 15) return;
+      if (t[0] !== '1') return;
+      if (t.length < 15) { accepted = false; return; }   // a malformed reference still uses up the flag
       const n = t.slice(2, 14).map(Number);
       const raw = Number(t[1]);
       const pos = mulVec(frame.rot, [n[0]!, n[1]!, n[2]!]);
@@ -226,7 +234,7 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
         }
         c.quantity++;
         c.instances.push(instance);
-        c.attach.push(ref.frame.pos);
+        c.attach.push(centroid(instance, ref.frame.pos));
         c.accepted.push(ref.accepted);
         continue;
       }

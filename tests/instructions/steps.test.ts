@@ -49,6 +49,17 @@ test('step text and accepted flag', () => {
   assert.deepEqual(step.added[0]!.source, { file: 'model.ldr', line: 3 });
 });
 
+test('a malformed reference line uses up a pending CONNECTED flag', () => {
+  const m = parse({ 'model.ldr': [part(4), '0 STEP', '0 !BRICKART CONNECTED', '1 4 0 -24 0 3001.dat', part(4, 0, -24)] });
+  assert.equal(m.sections[0]!.steps[1]!.added[0]!.accepted, false);
+});
+
+test('callout attach point is the centroid of offset parts', () => {
+  const foot = [part(0, 70, 0, 0), part(0, 70, -24, 0)];
+  const m = parse({ 'model.ldr': [part(4, 0, 82, 390, 'foot.ldr')], 'foot.ldr': foot });
+  assert.deepEqual(m.sections[0]!.steps[0]!.callouts[0]!.attach, [[70, 70, 390]]);
+});
+
 const wheel = ['0 wheel', part(0, 0, 0, 0, '3001.dat'), part(0, 0, -24, 0, '3001.dat')];
 
 test('small submodel becomes a callout with world transform', () => {
@@ -57,7 +68,8 @@ test('small submodel becomes a callout with world transform', () => {
   assert.equal(step.callouts.length, 1);
   const c = step.callouts[0]!;
   assert.equal(c.quantity, 2);
-  assert.deepEqual(c.attach, [[40, 0, 0], [-40, 0, 0]]);
+  // The attach point is the centroid of each instance's parts, not the submodel's origin.
+  assert.deepEqual(c.attach, [[40, -12, 0], [-40, -12, 0]]);
   assert.equal(c.instances[0]![0]!.pos[0], 40);
   assert.equal(c.miniSteps.flat().length, 2);
   assert.equal(step.loose.length, 0);

@@ -72,7 +72,7 @@ test('planShots names callout mini-steps and pads step numbers to 3 digits from 
   assert.ok(names.includes('step-001') && names.includes('step-101'));
   assert.ok(names.includes('callout-001-1-1') && names.includes('callout-001-1-2'));
   const step1 = shots.find((s) => s.name === 'step-001')!;
-  assert.deepEqual(step1.marks, [[0, 0, 0]]);
+  assert.deepEqual(step1.marks, [[10, 0, 0]]);   // centroid of the pair's parts
 });
 
 test('renderShots writes step PNGs and attach marks', { skip: noBrowser, timeout: 180_000 }, async () => {
