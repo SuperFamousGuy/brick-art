@@ -8,8 +8,9 @@
 </head>
 <body>
 <script type="module">
-// Instruction-manual render of flattened LDraw models: flat Lambert colors, dark LDraw edge and
-// conditional lines, light-blue background, no shadows, AO, or environment map. The Node side
+// Instruction-manual render of flattened LDraw models: flat Lambert colors, thick dark outlines
+// (an outline pass over part IDs and normals) plus LDraw's own thin edge and conditional lines,
+// light-blue background, no shadows, AO, or environment map. The Node side
 // (src/instructions/render-steps.ts) serves this page with a shot list in /job.json. For each
 // shot it posts /result/<name>.png and /result/<name>.json ({ marks, hiddenParts }).
 import * as THREE from 'three';
@@ -28,7 +29,9 @@ const PR = job.pixelRatio;
 const BG = 0xcfe6f5;
 const EDGE = 0x1b1b1b;
 const FOV = 24;
-const FILL = 0.8;
+const FILL = 0.92;
+/** Outline half-width in device pixels: about 0.25 mm at print size, never thinner than 1.5 px. */
+const outlineRadius = (w) => Math.max(1.5, w / 420);
 const deg = THREE.MathUtils.degToRad;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -116,9 +119,21 @@ function fit(entry, frame, view, W, H) {
   const key = `${frame[0]},${frame[1]}|${view.yaw},${view.pitch}|${W}x${H}`;
   const cachedFit = (entry.fits ??= new Map()).get(key);
   if (cachedFit) return cachedFit;
+  // Frame the parts' own boxes, not the corners of one box around them all, which stick out far
+  // past the silhouette of a long model seen at an angle.
   const box = new THREE.Box3();
-  for (let i = frame[0]; i < frame[1]; i++) box.expandByObject(entry.group.children[i]);
-  if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(20, 20, 20));
+  const corners = [];
+  const part = new THREE.Box3();
+  for (let i = frame[0]; i < frame[1]; i++) {
+    part.makeEmpty().expandByObject(entry.group.children[i]);
+    if (part.isEmpty()) continue;
+    box.union(part);
+    for (const x of [part.min.x, part.max.x]) for (const y of [part.min.y, part.max.y]) for (const z of [part.min.z, part.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  }
+  if (box.isEmpty()) {
+    box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(20, 20, 20));
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+  }
   const center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
   const yaw = deg(view.yaw), pitch = deg(view.pitch);
@@ -127,21 +142,27 @@ function fit(entry, frame, view, W, H) {
   const vHalf = deg(FOV / 2);
   const hHalf = Math.atan(Math.tan(vHalf) * (W / H));
   let dist = radius / Math.sin(Math.min(vHalf, hHalf));
-  const corners = [];
-  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
   cam.aspect = W / H;
-  for (let i = 0; i < 6; i++) {
+  const right = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  for (let i = 0; i < 8; i++) {
     cam.position.copy(center).addScaledVector(dir, dist);
     cam.lookAt(center);
     cam.near = Math.max(dist - radius * 2, 0.5);
     cam.far = dist + radius * 50;
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld();
-    let extent = 0;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const c of corners) {
       const p = c.clone().project(cam);
-      extent = Math.max(extent, Math.abs(p.x), Math.abs(p.y));
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
     }
+    // Centre the projected model in the frame, then size it to FILL of the tighter direction.
+    cam.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+    center.addScaledVector(right, (minX + maxX) / 2 * dist * Math.tan(hHalf));
+    center.addScaledVector(up, (minY + maxY) / 2 * dist * Math.tan(vHalf));
+    const extent = Math.max((maxX - minX) / 2, (maxY - minY) / 2);
     const near = Math.max(dist - radius, radius * 0.1);
     dist = radius + near * (extent / FILL);
   }
@@ -218,6 +239,93 @@ function countVisible(entry, watch, W, H) {
   return counts;
 }
 
+/**
+ * Swaps every visible mesh of the model to `pick(childIndex, mesh)` and hides its lines, renders
+ * into `target`, then restores everything.
+ */
+function renderWith(entry, target, pick, clear) {
+  const touched = [];
+  entry.group.children.forEach((child, i) => {
+    if (!child.visible) return;
+    child.traverse((o) => {
+      if (o.isLineSegments) { touched.push([o, 'visible', o.visible]); o.visible = false; }
+      else if (o.isMesh) { touched.push([o, 'material', o.material]); o.material = pick(i, o); }
+    });
+  });
+  scene.background = clear;
+  renderer.setRenderTarget(target);
+  renderer.render(scene, cam);
+  renderer.setRenderTarget(null);
+  scene.background = background;
+  for (let i = touched.length - 1; i >= 0; i--) { const [o, key, value] = touched[i]; o[key] = value; }
+}
+
+const normalMaterial = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
+const idMaterials = [];
+const idMaterial = (i) => (idMaterials[i] ??= new THREE.MeshBasicMaterial({
+  color: new THREE.Color().setRGB(((i + 1) & 255) / 255, (((i + 1) >> 8) & 255) / 255, (((i + 1) >> 16) & 255) / 255, THREE.LinearSRGBColorSpace),
+  side: THREE.DoubleSide,
+}));
+
+// Draws EDGE wherever a nearby pixel belongs to another part (or the background), or faces a
+// different way (a crease), within `radius` device pixels.
+const outlineMaterial = new THREE.ShaderMaterial({
+  uniforms: {
+    tColor: { value: null }, tId: { value: null }, tNormal: { value: null },
+    texel: { value: new THREE.Vector2() }, radius: { value: 2 }, edge: { value: new THREE.Color(EDGE) },
+  },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tColor, tId, tNormal; uniform vec2 texel; uniform float radius; uniform vec3 edge;
+    varying vec2 vUv;
+    float edgeTo(vec2 off, vec3 id0, vec3 n0, float solid0) {
+      vec2 uv = vUv + off * texel;
+      vec4 id1 = texture2D(tId, uv);
+      if (distance(id0, id1.rgb) > 0.001) return 1.0;
+      if (solid0 < 0.5) return 0.0;
+      vec3 n1 = texture2D(tNormal, uv).xyz * 2.0 - 1.0;
+      return dot(n0, n1) < 0.8 ? 1.0 : 0.0;
+    }
+    void main() {
+      vec4 c = texture2D(tColor, vUv);
+      vec4 id = texture2D(tId, vUv);
+      vec3 n0 = texture2D(tNormal, vUv).xyz * 2.0 - 1.0;
+      float solid = (id.r + id.g + id.b) > 0.0 ? 1.0 : 0.0;
+      float hit = 0.0;
+      for (int k = 0; k < 16; k++) {
+        float a = float(k) * 0.39269908;
+        vec2 d = vec2(cos(a), sin(a));
+        hit = max(hit, edgeTo(d * radius, id.rgb, n0, solid));
+        hit = max(hit, edgeTo(d * radius * 0.5, id.rgb, n0, solid));
+      }
+      gl_FragColor = vec4(mix(c.rgb, edge, hit), 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false,
+});
+const quadScene = new THREE.Scene();
+const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outlineMaterial));
+
+/** Renders the shot to the canvas: color, then outlines from part IDs and normals. */
+function renderOutlined(entry, W, H) {
+  const w = W * PR, h = H * PR;
+  const color = new THREE.WebGLRenderTarget(w, h, { samples: 4, type: THREE.HalfFloatType });
+  const ids = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  const normals = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+  renderer.setRenderTarget(color);
+  renderer.render(scene, cam);
+  renderer.setRenderTarget(null);
+  renderWith(entry, ids, (i) => idMaterial(i), black);
+  renderWith(entry, normals, () => normalMaterial, black);
+  const u = outlineMaterial.uniforms;
+  u.tColor.value = color.texture; u.tId.value = ids.texture; u.tNormal.value = normals.texture;
+  u.texel.value.set(1 / w, 1 / h);
+  u.radius.value = outlineRadius(w);
+  renderer.render(quadScene, quadCam);
+  color.dispose(); ids.dispose(); normals.dispose();
+}
+
 let current = null;
 for (const shot of job.shots) {
   const entry = await loadModel(shot.model);
@@ -231,7 +339,7 @@ for (const shot of job.shots) {
   entry.group.children.forEach((child, i) => { child.visible = i >= shot.visible[0] && i < shot.visible[1]; });
   placeCamera(fit(entry, shot.frame, shot.view, W, H), W, H);
 
-  renderer.render(scene, cam);
+  renderOutlined(entry, W, H);
   const blob = await new Promise((resolve) => renderer.domElement.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error(`could not encode ${shot.name}.png`);
   await post('/result/' + encodeURIComponent(shot.name) + '.png', blob);
