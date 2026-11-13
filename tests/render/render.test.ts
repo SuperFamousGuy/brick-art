@@ -3,41 +3,19 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { strToU8, zipSync } from 'fflate';
 import { ZipIndex } from '../../src/render/zip-index.ts';
 import { browserCandidates, findBrowser } from '../../src/render/browser.ts';
 import { renderModel } from '../../src/render/render.ts';
+import { LDCONFIG, writeLibrary } from '../helpers/ldraw-fixture.ts';
 
 const tmp = mkdtempSync(join(tmpdir(), 'brick-art-render-test-'));
-
-// A tiny LDraw library: one color, and a 20 x 20 x 20 box part built from triangles.
-const BOX = [
-  '0 Test Box', '0 Name: box.dat', '0 BFC CERTIFY CCW',
-  '3 16 -10 0 -10 10 0 -10 10 0 10', '3 16 -10 0 -10 10 0 10 -10 0 10',
-  '3 16 -10 -20 -10 -10 -20 10 10 -20 10', '3 16 -10 -20 -10 10 -20 10 10 -20 -10',
-  '3 16 -10 0 -10 -10 -20 -10 10 -20 -10', '3 16 -10 0 -10 10 -20 -10 10 0 -10',
-  '3 16 -10 0 10 10 0 10 10 -20 10', '3 16 -10 0 10 10 -20 10 -10 -20 10',
-  '3 16 -10 0 -10 -10 0 10 -10 -20 10', '3 16 -10 0 -10 -10 -20 10 -10 -20 -10',
-  '3 16 10 0 -10 10 -20 -10 10 -20 10', '3 16 10 0 -10 10 -20 10 10 0 10',
-].join('\n');
-const LDCONFIG = '0 LDraw.org Configuration File\n0 !COLOUR Red CODE 4 VALUE #C91A09 EDGE #333333\n';
-
-function writeLibrary(dir: string): string {
-  const file = join(dir, 'library.zip');
-  writeFileSync(file, zipSync({
-    'ldraw/LDConfig.ldr': strToU8(LDCONFIG),
-    'ldraw/parts/box.dat': [strToU8(BOX), { level: 0 }],
-    'ldraw/p/Stored.dat': strToU8('0 stored primitive'),
-  }));
-  return file;
-}
 
 test('ZipIndex reads stored and deflated entries by case-insensitive path', () => {
   const index = ZipIndex.open(writeLibrary(tmp), /^ldraw\//);
   try {
-    assert.equal(index.size, 3);
+    assert.equal(index.size, 4);
     assert.equal(new TextDecoder().decode(index.get('LDCONFIG.LDR')!), LDCONFIG);
-    assert.ok(new TextDecoder().decode(index.get('parts/box.dat')!).startsWith('0 Test Box'));
+    assert.ok(new TextDecoder().decode(index.get('parts/box.dat')!).startsWith('0 Test box.dat'));
     assert.equal(new TextDecoder().decode(index.get('p/stored.dat')!), '0 stored primitive');
     assert.equal(index.get('parts/missing.dat'), null);
     assert.equal(index.has('ldraw/parts/box.dat'), false);

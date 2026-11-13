@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SnapParseError, expandSnap, gridOffsets, parseSnapLine, snapPosOri } from '../../src/ldraw/snaps.ts';
+import { SnapParseError, expandSnap, gridOffsets, parseSnapLine, slideSpan, snapPosOri } from '../../src/ldraw/snaps.ts';
 
 const expand = (line: string) => expandSnap(parseSnapLine(line), line);
 const fgr = (g: string) =>
@@ -116,4 +116,12 @@ test('SNAP_GEN with spherical bounding is a ball or socket (real LDCad lines)', 
   assert.equal(socket[0]!.type, 'socket');
   assert.equal(expand('0 !LDCAD SNAP_GEN [gender=M] [bounding=box 4 4 4]')[0]!.type, 'other');
   assert.equal(expand('0 !LDCAD SNAP_GEN [gender=F] [bounding=cyl 6 8]')[0]!.type, 'other');
+});
+
+test('slideSpan is half the sliding length of a centred cylinder, else 0', () => {
+  assert.equal(slideSpan('0 !LDCAD SNAP_CYL [gender=M] [caps=none] [secs=A 6 160] [center=true] [slide=true] [ori=0 -1 0 1 0 0 0 0 1]'), 80);
+  assert.equal(slideSpan('0 !LDCAD SNAP_CYL [gender=M] [caps=none] [secs=L_ 6.25 2   R 6 16   R 8 4   R 6 16   _L 6.25 2] [center=true] [slide=true]'), 20);
+  assert.equal(slideSpan('0 !LDCAD SNAP_CYL [gender=F] [caps=none] [secs=R 4 40] [center=true]'), 0);
+  assert.equal(slideSpan('0 !LDCAD SNAP_CYL [gender=M] [caps=one] [secs=R 8 2   R 6 16] [slide=true]'), 0);
+  assert.equal(slideSpan('not a snap'), 0);
 });

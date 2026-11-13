@@ -19,6 +19,8 @@ import { findSubstitutes } from '../lookup/find-substitutes.ts';
 import { TRAITS } from '../derive/traits.ts';
 import { findBrowser } from '../render/browser.ts';
 import { openLDrawLibrary } from '../render/library.ts';
+import { buildInstructions } from '../instructions/build.ts';
+import { dbGeometry } from '../instructions/geometry.ts';
 import { renderModel, type RenderView } from '../render/render.ts';
 import type { ConnectionType } from '../types.ts';
 
@@ -275,6 +277,30 @@ export function createServer(dataDir: string): McpServer {
         }
         const library = await openLDrawLibrary(dataDir);
         return ok(await renderModel({ ...args, browser, library }));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'render_instructions',
+    {
+      description: 'Renders a LEGO-style PDF instruction booklet and one PNG per step for an LDraw model (.ldr or .mpd), after checking that each step\'s parts connect to the model built so far. A status of "blocked" lists the floating, overlapping, or off-grid parts to fix in findings, and renders nothing. Run it after render_model. Needs an installed Chrome, Edge, Chromium, or Brave; the first render downloads the LDraw parts library (about 145 MB) if it is not cached. Returns the PDF path, the step PNG paths, each step\'s parts and inserted sub-assemblies, and findings (one per floating cluster, saying in which step it first joins the model).',
+      inputSchema: {
+        modelPath: z.string().describe('Absolute path to the .ldr or .mpd model file. Submodel files it references are read from the same folder.'),
+        outDir: z.string().optional().describe("Folder for the PDF and step PNGs (default: the model's folder). Files are named <model>-instructions.pdf and <model>-step-NN.png."),
+      },
+    },
+    async (args: { modelPath: string; outDir?: string }): Promise<ToolResult> => {
+      try {
+        const browser = findBrowser();
+        if (browser === null) {
+          return fail('No Chromium-based browser found (Chrome, Edge, Chromium, or Brave). Install one, or set BRICK_ART_BROWSER to its executable.');
+        }
+        const library = await openLDrawLibrary(dataDir);
+        const db = current.get();
+        return ok(await buildInstructions({ ...args, browser, library, geometry: db === null ? null : dbGeometry(db) }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

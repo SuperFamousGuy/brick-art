@@ -18,8 +18,16 @@ export function ldrawColorNames(library: ZipIndex): Map<number, string> {
   return names;
 }
 
+/**
+ * True when a file draws its own geometry (line types 2 to 5), so it is a part, not a submodel: a
+ * custom part kept in the model's folder rather than the library.
+ */
+export function isPartFile(lines: string[]): boolean {
+  return lines.some((l) => /^\s*[2-5]\s/.test(l));
+}
+
 /** Splits an MPD into its named files; a plain LDR is one unnamed file. */
-function splitMpd(text: string): { main: string[]; files: Map<string, string[]> } {
+export function splitMpd(text: string): { main: string[]; files: Map<string, string[]> } {
   const files = new Map<string, string[]>();
   let current: string[] | null = null;
   let main: string[] | null = null;
@@ -66,7 +74,7 @@ export function tallyModel(
       const color = raw === 16 ? inherited : raw;
       const ref = t.slice(14).join(' ').toLowerCase().replaceAll('\\', '/');
       const sub = loadLocal(ref);
-      if (sub && !library.has(`parts/${ref}`)) { walk(sub, color, depth + 1); continue; }
+      if (sub && !library.has(`parts/${ref}`) && !isPartFile(sub)) { walk(sub, color, depth + 1); continue; }
       const key = `${ref}\u0000${color}`;
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }

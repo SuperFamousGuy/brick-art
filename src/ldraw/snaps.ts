@@ -133,6 +133,19 @@ function parseSecs(secs: string | undefined): Section[] {
   return out;
 }
 
+/**
+ * Half the length of a centred sliding cylinder (an axle, bar, or pin with `[slide=true]
+ * [center=true]`), in LDU: a partner can sit anywhere within that distance of the snap point along
+ * its axis. 0 for any other snap, or a line that does not parse.
+ */
+export function slideSpan(raw: string): number {
+  let spec: SnapSpec;
+  try { spec = parseSnapLine(raw); } catch { return 0; }
+  const { params } = spec;
+  if (spec.kind !== 'CYL' || params.slide?.toLowerCase() !== 'true' || params.center?.toLowerCase() !== 'true') return 0;
+  return parseSecs(params.secs).reduce((sum, s) => sum + s.length, 0) / 2;
+}
+
 function classifyCyl(params: Record<string, string>, male: boolean): ConnectionType {
   const secs = parseSecs(params.secs);
   if (secs.some((s) => s.shape === 'A')) return male ? 'axle' : 'axle_hole';

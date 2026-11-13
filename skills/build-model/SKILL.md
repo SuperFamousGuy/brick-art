@@ -42,8 +42,17 @@ list and the instructions from it, and render it with `render_model`.
 7. **Refine.** Review the images against "Detail baseline" as a critic would. If the
    model looks blocky, flat, or pixelated, or if it misses a feature from your plan,
    add detail and render again. Do at least one refinement pass before you deliver.
-8. **Deliver.** Write `<name>.md` with the parts list and the instructions, show the
-   user the images, and give the paths of the `.ldr`, `.md`, and PNG files.
+8. **Instruction booklet.** When the model is final, call `render_instructions` with the
+   absolute path of the `.ldr` file. It checks every step for floating, overlapping, and
+   off-grid parts, then writes `<name>-instructions.pdf` and `<name>-step-NN.png` next to
+   the model (or in `outDir`). See "Instruction booklet" below for how to act on the
+   result. Any change to the `.ldr` file after this, including a fix for a finding,
+   makes the booklet stale: run `render_model` and `render_instructions` again before
+   you deliver. If `render_instructions` fails (no browser, or an error), deliver the
+   rest without the PDF and tell the user why.
+9. **Deliver.** Write `<name>.md` with the parts list and the instructions, show the
+   user the images, and give the paths of the `.ldr`, `.md`, `-instructions.pdf`, and
+   PNG files.
 
 ## Detail baseline
 
@@ -99,24 +108,71 @@ A part placement is one line:
   color id. The `render_model` tally names each code from LDraw's own color table, so
   check that the names match the colors you chose.
 - **Steps:** put `0 STEP` after each group of parts that makes one build step.
-  Each step adds parts that attach to what is already built.
+  Each step adds parts that attach to what is already built. Keep a step to 8 added
+  parts or fewer.
+- **Step text:** put one `0 // <sentence>` line inside each step. It becomes that step's
+  text in the `.md` file.
+- **View:** `0 ROTSTEP <x> <y> <z> ABS` turns the camera for the steps after it, and
+  `0 ROTSTEP END` returns to the default view.
 - **Header:** start the file with `0 <Model title>`, `0 Name: <name>.ldr`, and
   `0 Author: brick-art`.
 
 Large models can split into submodels: write each one as its own `.ldr` file in the
 same folder and place it with a type 1 line like a part. `render_model` reads them
-from the model's folder.
+from the model's folder. A submodel of 8 parts or fewer appears in the booklet as a
+callout box beside the step that uses it. A larger submodel gets its own numbered
+section, and each color it is placed in gets its own section.
 
 ## Parts list
 
 One row per part and color: quantity, part number, part name, color name, and
 size. The totals must match the `render_model` tally.
 
+## Instruction booklet
+
+`render_instructions` returns `status`, `checked`, `pdf`, `steps`, `findings`,
+`accepted`, and `totalParts`.
+
+- **Blocked.** Findings of kind `floating`, `overlap`, and `off-grid` block the build.
+  The status is `blocked`, no PDF is written, and any PDF from an earlier run is
+  removed. Fix each one in the `.ldr` file and run the tool again.
+- **Floating clusters.** A `floating` (or `off-grid`) finding covers one cluster: the
+  parts of one step that connect to each other but not to the model. Its message gives
+  the part count, up to 5 parts with color and position, and either "first joins the
+  model in step N via <part> at <position>" or "never joins the finished model". Inside
+  a section or callout the message names it instead: "sub-assembly <id>" or "callout
+  <file>". A
+  cluster that joins in a later step is still blocking: move the joining part into
+  the cluster's step or earlier, or reorder the steps. A cluster that never joins
+  needs its position or a connecting part fixed. The finding's `part`, `pos`, and
+  `source` name the cluster's first part.
+- **Accepting a part.** Put `0 !BRICKART CONNECTED` on the line before a part to accept
+  it. Put it before a submodel reference to accept that whole group. Accepting parts
+  inside a submodel does not accept the submodel's attachment; only the line before its
+  reference does. Use it only after
+  you check in the render that the part really attaches, and tell the user which parts
+  you accepted (the `accepted` list names them).
+- **Non-blocking findings.** `unverified` means a connection could not be checked: no
+  connection data but touching the model, a possible overlap, contact with a part that
+  has no data, or a part hidden from the camera. A part with no connection data that
+  touches nothing is `floating`, not `unverified`. `large-step` means a step adds more than 8 parts
+  (a warning) or is too crowded for one page (blocking: the page would clip it, so split the
+  step). Report both kinds to the user, and split large steps when you can.
+- **Unchecked.** When `checked` is `false`, the parts database was not available and
+  no connections were checked. Tell the user.
+
 ## Instructions
 
-Number the steps to match the `0 STEP` groups in the `.ldr` file. For each step,
-list the parts it adds and say where each one goes, relative to parts already
-placed.
+Generate the instruction section of `<name>.md` from the `steps` the tool returns. For
+each step, write its number, its `text`, the embedded image `<name>-step-NN.png`, its
+`parts`, and its `inserts`. `parts` are the parts the step adds by hand: loose parts
+and callout parts, counted over every callout instance. Each entry in `inserts` is a
+sub-assembly added whole: write "add sub-assembly <section>" (with "Nx" when
+`quantity` is more than 1), and don't list its parts again, since its own section's
+steps list them. Group steps by `section`; when a step's `sectionQuantity` is more
+than 1, say that the section is built that many times. Summed over all steps, each
+step's parts times its `sectionQuantity` equal `totalParts`. The deliverables include
+`<name>-instructions.pdf`.
 
 ## If rendering fails
 
