@@ -117,15 +117,22 @@ export function planPickABrick(tally: readonly TallyRow[], lookup: ElementLookup
  */
 export function searchUrls(rows: readonly Pick<PlanRow, 'candidates'>[]): string[] {
   const groups: { designs: Set<string>; ids: string[] }[] = [];
+  const url = (ids: readonly string[]) => `${PICK_A_BRICK_URL}?query=${ids.join('%20')}`;
+  const oversized: string[] = [];
   for (const r of rows) {
-    const designs = new Set(r.candidates.map((c) => c.designId));
     const ids = r.candidates.map((c) => c.elementId);
+    if (ids.length > SEARCH_LIMIT) {
+      // Too many for one search: the row gets searches of its own, in chunks.
+      for (let i = 0; i < ids.length; i += SEARCH_LIMIT) oversized.push(url(ids.slice(i, i + SEARCH_LIMIT)));
+      continue;
+    }
+    const designs = new Set(r.candidates.map((c) => c.designId));
     let g = groups.find((x) => [...designs].every((d) => !x.designs.has(d)) && x.ids.length + ids.length <= SEARCH_LIMIT);
     if (!g) groups.push((g = { designs: new Set(), ids: [] }));
     for (const d of designs) g.designs.add(d);
     g.ids.push(...ids);
   }
-  return groups.map((g) => `${PICK_A_BRICK_URL}?query=${g.ids.join('%20')}`);
+  return [...groups.map((g) => url(g.ids)), ...oversized];
 }
 
 /** The upload file: an `elementId,quantity` header, then one line per element, CRLF line ends. */
@@ -133,8 +140,31 @@ export function toCsv(lines: readonly { elementId: string; quantity: number }[])
   return ['elementId,quantity', ...lines.map((l) => `${l.elementId},${l.quantity}`)].join('\r\n') + '\r\n';
 }
 
-/** Element lookup over the parts database, with LDraw colors mapped through LDConfig.ldr. */
-export function dbElementLookup(db: DatabaseSync, ldconfig: string): ElementLookup {
+const MAX_ALIAS_HOPS = 3;
+const TYPE1 = /^\s*1\s/;
+
+/**
+ * The part an LDraw alias file stands for: a file whose first line is `0 ~Moved to ...` or
+ * `0 =...` names its target on its last type-1 line. Null when the file is not an alias.
+ */
+export function aliasTarget(text: string): string | null {
+  const lines = text.split(/\r?\n/);
+  const first = lines.find((l) => l.trim() !== '');
+  const desc = first === undefined ? null : /^\uFEFF?\s*0\s+(.*)$/.exec(first)?.[1]?.trim();
+  if (!desc || !(/^~Moved to\b/i.test(desc) || desc.startsWith('='))) return null;
+  const last = lines.filter((l) => TYPE1.test(l)).at(-1);
+  const tokens = last?.trim().split(/\s+/) ?? [];
+  if (tokens.length < 15) return null;
+  return tokens.slice(14).join(' ').toLowerCase().replaceAll('\\', '/').replace(/\.dat$/, '');
+}
+
+/**
+ * Element lookup over the parts database, with LDraw colors mapped through LDConfig.ldr.
+ * `readPart` returns a library part file's text by stem (such as "166"), for following aliases.
+ */
+export function dbElementLookup(
+  db: DatabaseSync, ldconfig: string, readPart: (stem: string) => string | null = () => null,
+): ElementLookup {
   const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'elements'").get();
   if (!hasTable) throw new Error('The parts database has no element IDs. Run /brick-art:reseed to install a newer one.');
   const colors = (db.prepare('SELECT id, name, rgb, is_trans AS t FROM colors').all() as
@@ -153,9 +183,27 @@ export function dbElementLookup(db: DatabaseSync, ldconfig: string): ElementLook
       .map((r) => ({ elementId: r.e, partNum: r.p, designId: r.d ?? r.p }));
   return {
     partFor(ldrawPart) {
-      const stem = ldrawPart.toLowerCase();
-      const hit = (byNum.get(stem) ?? byFile.get(`${stem}.dat`)) as { p: string } | undefined;
-      return hit?.p ?? null;
+      const direct = (stem: string) =>
+        ((byNum.get(stem) ?? byFile.get(`${stem}.dat`)) as { p: string } | undefined)?.p ?? null;
+      const start = ldrawPart.toLowerCase();
+      const own = direct(start);
+      if (own !== null) return own;
+      // Same order as the seed: aliases (`~Moved to`, `=`), then a variant suffix such as 3023b.
+      const seen = new Set([start]);
+      let cur = start;
+      let isAlias = false;
+      for (let hop = 0; hop < MAX_ALIAS_HOPS; hop++) {
+        const text = readPart(cur);
+        const next = text === null ? null : aliasTarget(text);
+        if (next === null || seen.has(next)) break;
+        isAlias = true;
+        seen.add(next);
+        cur = next;
+        const hit = direct(cur);
+        if (hit !== null) return hit;
+      }
+      const variant = /^(.+)[a-z]$/.exec(start);
+      return !isAlias && variant ? direct(variant[1]!) : null;
     },
     colorFor: (code) => colorMap.get(code) ?? null,
     elementsFor(partNum, colorId) {
@@ -177,7 +225,11 @@ export interface PickABrickOptions {
   outDir?: string;
   overrides?: Override[];
   library: ZipIndex;
-  db: DatabaseSync;
+  /**
+   * Returns the parts database. It is called once, after the model is read, and every query runs
+   * before the next await, so a database swapped in meanwhile cannot close the handle mid-query.
+   */
+  db: () => DatabaseSync;
 }
 
 export interface PickABrickResult extends Omit<Plan, 'lines'> {
@@ -198,8 +250,15 @@ export async function writePickABrickList(opts: PickABrickOptions): Promise<Pick
   if (!(await stat(modelPath).then((s) => s.isFile(), () => false))) throw new Error(`model file not found: ${modelPath}`);
   const ldconfig = opts.library.get('LDConfig.ldr');
   if (!ldconfig) throw new Error('the LDraw library has no LDConfig.ldr');
-  const lookup = dbElementLookup(opts.db, new TextDecoder().decode(ldconfig));
-  const tally = tallyModel(await readFile(modelPath, 'utf8'), modelFolderFiles(dirname(modelPath)), opts.library, ldrawColorNames(opts.library));
+  const text = await readFile(modelPath, 'utf8');
+  // No awaits from here until the plan is built: see PickABrickOptions.db.
+  const tally = tallyModel(text, modelFolderFiles(dirname(modelPath)), opts.library, ldrawColorNames(opts.library));
+  const decoder = new TextDecoder();
+  const readPart = (stem: string) => {
+    const bytes = opts.library.get(`parts/${stem}.dat`);
+    return bytes ? decoder.decode(bytes) : null;
+  };
+  const lookup = dbElementLookup(opts.db(), decoder.decode(ldconfig), readPart);
   const plan = planPickABrick(tally, lookup, opts.overrides);
   const outDir = resolve(opts.outDir ?? dirname(modelPath));
   await mkdir(outDir, { recursive: true });

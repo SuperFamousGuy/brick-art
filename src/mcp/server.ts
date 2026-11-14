@@ -325,9 +325,13 @@ export function createServer(dataDir: string): McpServer {
     },
     async (args: { modelPath: string; outDir?: string; overrides?: Override[] }): Promise<ToolResult> => {
       try {
-        const db = current.get();
-        if (db === null) return notReady();
+        if (current.get() === null) return notReady();
         const library = await openLDrawLibrary(dataDir);
+        const db = () => {
+          const handle = current.get();
+          if (handle === null) throw new Error('The parts database stopped being available; try again.');
+          return handle;
+        };
         return ok(await writePickABrickList({ ...args, library, db }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));

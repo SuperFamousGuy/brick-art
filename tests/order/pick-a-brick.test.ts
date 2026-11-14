@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../../src/db/schema.ts';
 import { writeColors, writeElements, writeParts, writeRelationships, type PartRow } from '../../src/db/write.ts';
 import {
-  PICK_A_BRICK_URL, dbElementLookup, defaultElement, planPickABrick, searchUrls, toCsv, writePickABrickList,
+  PICK_A_BRICK_URL, aliasTarget, dbElementLookup, defaultElement, planPickABrick, searchUrls, toCsv, writePickABrickList,
   type Candidate, type ElementLookup,
 } from '../../src/order/pick-a-brick.ts';
 import { ZipIndex } from '../../src/render/zip-index.ts';
@@ -77,6 +77,21 @@ test('searchUrls keeps rows that share a design apart and caps each search at 60
   assert.deepEqual(queries[1], ['2']);
 });
 
+test('searchUrls splits a row with more than 60 candidates into searches of its own', () => {
+  const many = Array.from({ length: 130 }, (_, i) => cand(String(1000 + i), 'Big'));
+  const urls = searchUrls([{ candidates: [cand('1', 'X')] }, { candidates: many }]);
+  const queries = urls.map((u) => u.slice(u.indexOf('=') + 1).split('%20'));
+  assert.deepEqual(queries.map((q) => q.length), [1, 60, 60, 10]);
+  assert.deepEqual(queries.slice(1).flat(), many.map((c) => c.elementId));
+});
+
+test('aliasTarget reads ~Moved to and = files and ignores other parts', () => {
+  assert.equal(aliasTarget('0 ~Moved to 3001\n0 Name: 166.dat\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n'), '3001');
+  assert.equal(aliasTarget('\n0 =Brick 2 x 4\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 S\\Sub.DAT\n'), 's/sub');
+  assert.equal(aliasTarget('0 Brick 2 x 4\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 box.dat\n'), null);
+  assert.equal(aliasTarget('0 ~Moved to nothing\n'), null);
+});
+
 test('toCsv writes the Pick a Brick header and CRLF lines', () => {
   assert.equal(toCsv([{ elementId: '300121', quantity: 3 }]), 'elementId,quantity\r\n300121,3\r\n');
   assert.equal(toCsv([]), 'elementId,quantity\r\n');
@@ -120,6 +135,25 @@ test('dbElementLookup maps LDraw parts and colors and falls back to related part
   db.close();
 });
 
+test('dbElementLookup follows aliases, then variant suffixes, like the seed', () => {
+  const db = makeDb();
+  const files: Record<string, string> = {
+    '166': '0 ~Moved to 3001\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 3001.dat\n',
+    '167': '0 ~Moved to 166\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 166.dat\n',
+    'loopa': '0 ~Moved to loopb\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 loopb.dat\n',
+    'loopb': '0 ~Moved to loopa\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 loopa.dat\n',
+    '3001z': '0 ~Moved to gone\n1 16 0 0 0 1 0 0 0 1 0 0 0 1 gone.dat\n',
+  };
+  const lookup = dbElementLookup(db, LDCONFIG, (stem) => files[stem] ?? null);
+  assert.equal(lookup.partFor('166'), '3001');
+  assert.equal(lookup.partFor('167'), '3001');
+  assert.equal(lookup.partFor('loopa'), null);
+  assert.equal(lookup.partFor('3001b'), '3001');
+  assert.equal(lookup.partFor('3001z'), null, 'an alias to nothing is not suffix-matched');
+  assert.equal(lookup.partFor('3794b'), '3794b', 'an exact part wins over its suffix');
+  db.close();
+});
+
 test('dbElementLookup asks for a reseed when the database has no elements table', () => {
   const db = makeDb();
   db.exec('DROP TABLE elements');
@@ -140,12 +174,14 @@ test('writePickABrickList writes <model>-pick-a-brick.csv from the model and its
     '',
   ].join('\n'));
   const r = await writePickABrickList({
-    modelPath: join(dir, 'm.ldr'), library, db, overrides: [{ part: 'box', color: 1, elementId: '4000002' }],
+    modelPath: join(dir, 'm.ldr'), library, db: () => db, overrides: [{ part: 'box', color: 1, elementId: '4000002' }],
   });
   assert.equal(r.csv, join(dir, 'm-pick-a-brick.csv'));
   assert.equal(await readFile(r.csv, 'utf8'), 'elementId,quantity\r\n4000002,2\r\n');
   assert.deepEqual([r.lineCount, r.totalParts, r.partsInCsv, r.unchecked], [1, 3, 2, 0]);
   assert.deepEqual(r.rows.map((x) => [x.part, x.source]), [['big', 'no-element'], ['box', 'checked']]);
-  await assert.rejects(writePickABrickList({ modelPath: join(dir, 'none.ldr'), library, db }), /not found/);
+  // The handle is fetched only after the model is read, so a missing model never touches it.
+  const noDb = () => { throw new Error('db fetched too early'); };
+  await assert.rejects(writePickABrickList({ modelPath: join(dir, 'none.ldr'), library, db: noDb }), /not found/);
   db.close();
 });
