@@ -1,6 +1,6 @@
 {
   "name": "brick-art",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Design buildable LEGO-style models from a text prompt, backed by a local database of real brick parts.",
   "author": {
     "name": "SuperFamousGuy"
