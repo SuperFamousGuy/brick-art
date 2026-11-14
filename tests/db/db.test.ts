@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createSchema, SEED_VERSION } from '../../src/db/schema.ts';
 import {
   writeManifest, writeParts, writePart, writeConnections, writeTraits, writeColors,
-  writePartColors, writeRelationships, writeCreativeUses, writeSources,
+  writePartColors, writeRelationships, writeCreativeUses, writeSources, writeElements,
   writeProjects, writeProjectParts, writeSubmodels, writePlacements,
 } from '../../src/db/write.ts';
 import type { PartRow } from '../../src/db/write.ts';
@@ -39,21 +39,21 @@ const part = (n: string, over: Partial<PartRow> = {}): PartRow => ({
   basePartNum: null, isSystem: true, ...over,
 });
 
-test('createSchema creates all 15 tables and symmetric compat rows', () => {
+test('createSchema creates all 16 tables and symmetric compat rows', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   assert.deepEqual(names(db, 'table'), [
-    'colors', 'connection_compat', 'connections', 'creative_uses', 'manifest',
+    'colors', 'connection_compat', 'connections', 'creative_uses', 'elements', 'manifest',
     'part_colors', 'part_relationships', 'part_traits', 'parts', 'placements',
     'project_authors', 'project_parts', 'projects', 'sources', 'submodels',
   ]);
-  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 13);
+  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 14);
   const has = (a: string, b: string) =>
     db.prepare('SELECT 1 AS x FROM connection_compat WHERE a = ? AND b = ?').get(a, b) !== undefined;
   assert.ok(has('stud', 'stud_receptor') && has('stud_receptor', 'stud'));
   assert.ok(has('axle', 'pin_hole') && has('pin_hole', 'axle'));
   assert.equal((db.prepare('SELECT COUNT(*) AS n FROM connection_compat').get() as { n: number }).n, 16);
-  assert.equal(SEED_VERSION, 3);
+  assert.equal(SEED_VERSION, 4);
   db.close();
 });
 
@@ -83,6 +83,10 @@ test('writers store rows with exact column names', () => {
   writePartColors(db, [{ partNum: '3001', colorId: 4, setCount: 5, lastYear: 2020, inElements: true }]);
   writeRelationships(db, [{ relType: 'M', childPartNum: '3002', parentPartNum: '3001' }]);
   writeCreativeUses(db, [{ partNum: '3001', represents: 'wall', note: null, reviewed: true, source: 'curated' }]);
+  writeElements(db, [
+    { elementId: '300121', partNum: '3001', colorId: 4, designId: '3001' },
+    { elementId: '300121', partNum: '3001', colorId: 4, designId: '3001' },
+  ]);
   writeSources(db, [{ name: 'parts', url: 'http://x', downloadedAt: '2026-01-01', bytes: 5, sha256: 'ab', lastModified: null }]);
   writeManifest(db, { seed_version: 1, curated_hash: 'h' });
   const one = (sql: string) => db.prepare(sql).get() as Record<string, unknown>;
@@ -90,6 +94,8 @@ test('writers store rows with exact column names', () => {
   assert.equal(one('SELECT is_placeholder AS v FROM colors').v, 0);
   assert.equal(one('SELECT reviewed AS v FROM creative_uses').v, 1);
   assert.equal(one('SELECT bytes AS v FROM sources').v, 5);
+  assert.deepEqual({ ...one('SELECT * FROM elements') }, { element_id: '300121', part_num: '3001', color_id: 4, design_id: '3001' });
+  assert.equal(one('SELECT COUNT(*) AS v FROM elements').v, 1);
   assert.equal(one('SELECT child_part_num AS v FROM part_relationships').v, '3002');
   assert.equal(one("SELECT value AS v FROM manifest WHERE key = 'seed_version'").v, '1');
   db.close();

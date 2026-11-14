@@ -23,6 +23,7 @@ import { buildInstructions } from '../instructions/build.ts';
 import { dbGeometry } from '../instructions/geometry.ts';
 import { renderModel, type RenderView } from '../render/render.ts';
 import type { ConnectionType } from '../types.ts';
+import { PICK_A_BRICK_URL, UPLOAD_LIMIT, writePickABrickList, type Override } from '../order/pick-a-brick.ts';
 
 const CONNECTION_TYPES = [
   'stud', 'stud_receptor', 'bar', 'bar_holder', 'clip', 'pin', 'pin_hole',
@@ -301,6 +302,37 @@ export function createServer(dataDir: string): McpServer {
         const library = await openLDrawLibrary(dataDir);
         const db = current.get();
         return ok(await buildInstructions({ ...args, browser, library, geometry: db === null ? null : dbGeometry(db) }));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'pick_a_brick_list',
+    {
+      description: `Writes <model>-pick-a-brick.csv, the model's parts as LEGO element IDs and quantities in the upload format of LEGO Pick a Brick (${PICK_A_BRICK_URL}). Most parts have several element IDs per color and Pick a Brick stocks only some, so each row starts on a default guess (source "guess"); check the guesses on Pick a Brick, then call again with overrides. Returns each row's candidates, searchUrls that cover every candidate, and lineCount (Pick a Brick takes at most ${UPLOAD_LIMIT} lines).`,
+      inputSchema: {
+        modelPath: z.string().describe('Absolute path to the .ldr or .mpd model file. Submodel files it references are read from the same folder.'),
+        outDir: z.string().optional().describe("Folder for the CSV (default: the model's folder)."),
+        overrides: z.array(z.object({
+          part: z.string().describe('LDraw part as in the model file, without ".dat", such as "3001".'),
+          color: int.describe('LDraw color code as in the model file.'),
+          elementId: z.string().regex(/^\d{5,8}$/).nullable()
+            .describe('The element ID Pick a Brick sells for this part and color, or null when it does not sell one.'),
+        })).optional().describe('Results of checking Pick a Brick; each replaces the default guess for one part and color.'),
+      },
+    },
+    async (args: { modelPath: string; outDir?: string; overrides?: Override[] }): Promise<ToolResult> => {
+      try {
+        if (current.get() === null) return notReady();
+        const library = await openLDrawLibrary(dataDir);
+        const db = () => {
+          const handle = current.get();
+          if (handle === null) throw new Error('The parts database stopped being available; try again.');
+          return handle;
+        };
+        return ok(await writePickABrickList({ ...args, library, db }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

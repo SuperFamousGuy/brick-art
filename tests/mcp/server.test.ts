@@ -44,12 +44,12 @@ async function connect(dataDir: string) {
 
 const textOf = (r: unknown): string => (r as { content: { text: string }[] }).content[0]!.text;
 
-test('listTools returns the twelve tools', async () => {
+test('listTools returns the thirteen tools', async () => {
   const { client, close } = await connect(join(tmp, 'empty'));
   const { tools } = await client.listTools();
   assert.deepEqual(
     tools.map((t) => t.name).sort(),
-    ['database_status', 'find_by_use', 'find_compatible_parts', 'find_substitutes', 'get_part', 'get_project', 'get_submodel', 'list_colors', 'render_instructions', 'render_model', 'search_parts', 'search_projects'],
+    ['database_status', 'find_by_use', 'find_compatible_parts', 'find_substitutes', 'get_part', 'get_project', 'get_submodel', 'list_colors', 'pick_a_brick_list', 'render_instructions', 'render_model', 'search_parts', 'search_projects'],
   );
   await close();
 });

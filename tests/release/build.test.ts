@@ -31,13 +31,13 @@ const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 test('buildRelease writes both databases, release.json and CREDITS.md', async (t) => {
   const { dir, outDir, result } = await run(t, MPD_CLEAN);
   assert.deepEqual(result.gateFailures, []);
-  assert.equal(result.tag, 'data-3-20261117');
+  assert.equal(result.tag, 'data-4-20261117');
   assert.deepEqual((await readdir(outDir)).sort(), ['CREDITS.md', 'full.db.gz', 'release.json', 'standard.db.gz']);
   assert.deepEqual([...result.assets].sort(), ['CREDITS.md', 'full.db.gz', 'release.json', 'standard.db.gz']);
 
   const meta = JSON.parse(await readFile(join(outDir, 'release.json'), 'utf8'));
-  assert.equal(meta.tag, 'data-3-20261117');
-  assert.equal(meta.schemaVersion, 3);
+  assert.equal(meta.tag, 'data-4-20261117');
+  assert.equal(meta.schemaVersion, 4);
   assert.equal(meta.builtAt, '2026-11-17T08:00:00.000Z');
   assert.deepEqual(meta.source, { runId: '42', sha: 'abc123' });
   const counts: Record<string, DatabaseSync> = {};

@@ -5,7 +5,8 @@ import { iterateCsv } from './csv.ts';
 
 export interface RbPart { partNum: string; name: string; categoryId: number }
 export interface RbColor { id: number; name: string; rgb: string; isTrans: boolean }
-export interface RbElement { partNum: string; colorId: number }
+/** One LEGO element: a part in one color. `designId` is LEGO's design number, or null when unknown. */
+export interface RbElement { elementId: string; partNum: string; colorId: number; designId: string | null }
 export interface RbRelationship { relType: string; child: string; parent: string }
 export interface RbInventoryPart { inventoryId: number; partNum: string; colorId: number; isSpare: boolean; quantity: number }
 export interface RbSet { name: string; year: number; themeId: number; numParts: number }
@@ -72,9 +73,11 @@ export async function loadRebrickable(dir: string): Promise<RebrickableData> {
     rgb: r.rgb,
     isTrans: isTrue(r.is_trans),
   }));
-  const elements = await loadTable<RbElement>(dir, 'elements', ['part_num', 'color_id'], (r) => ({
+  const elements = await loadTable<RbElement>(dir, 'elements', ['element_id', 'part_num', 'color_id'], (r) => ({
+    elementId: r.element_id,
     partNum: r.part_num,
     colorId: Number(r.color_id),
+    designId: r.design_id || null,
   }));
   const relationships = await loadTable<RbRelationship>(
     dir, 'part_relationships', ['rel_type', 'child_part_num', 'parent_part_num'], (r) => ({
