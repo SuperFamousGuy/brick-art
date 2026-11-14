@@ -48,6 +48,12 @@ The `render_instructions` MCP tool (`src/instructions/`) checks every step for
 floating, overlapping, and off-grid parts, then builds the PDF booklet and step
 images. A model with blocking findings is not rendered.
 
+The `pick_a_brick_list` MCP tool (`src/order/`) writes `<name>-pick-a-brick.csv`,
+the model's parts as LEGO element IDs for upload to LEGO Pick a Brick. Element
+IDs come from the database's `elements` table (schema 4). The skill has Claude
+check the tool's guesses on Pick a Brick in a browser and pass the results back
+as overrides.
+
 The plugin packaging is in `.claude-plugin/`. Opening this repo directly in
 Claude Code is for development only; test the plugin with
 `claude --plugin-dir .`.

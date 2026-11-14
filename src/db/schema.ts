@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
 
 // Pairs are listed once; createSchema stores both directions.
 const COMPAT_PAIRS: [string, string][] = [
@@ -44,6 +44,7 @@ CREATE TABLE part_colors (
   PRIMARY KEY (part_num, color_id)
 );
 CREATE TABLE part_relationships (rel_type TEXT, child_part_num TEXT, parent_part_num TEXT);
+CREATE TABLE elements (element_id TEXT PRIMARY KEY, part_num TEXT, color_id INTEGER, design_id TEXT);
 CREATE TABLE creative_uses (part_num TEXT, represents TEXT, note TEXT, reviewed INTEGER, source TEXT);
 CREATE TABLE projects (
   id INTEGER PRIMARY KEY, source TEXT, source_key TEXT, kind TEXT, name TEXT, year INTEGER,
@@ -68,6 +69,7 @@ CREATE INDEX idx_parts_dims ON parts(width_studs, depth_studs, height_plates);
 CREATE INDEX idx_connections_part ON connections(part_num);
 CREATE INDEX idx_connections_type ON connections(type);
 CREATE INDEX idx_part_colors_color ON part_colors(color_id);
+CREATE INDEX idx_elements_part_color ON elements(part_num, color_id);
 CREATE INDEX idx_creative_uses_represents ON creative_uses(represents);
 CREATE INDEX idx_projects_theme ON projects(theme);
 CREATE INDEX idx_projects_year ON projects(year);

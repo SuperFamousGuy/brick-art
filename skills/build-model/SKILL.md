@@ -1,6 +1,6 @@
 ---
 name: build-model
-description: Design a buildable LEGO-style brick model from a text description and deliver its parts list, step-by-step instructions, and rendered images. Use when the user asks to build, design, or make a model, MOC, or brick version of something, such as "build a small red lighthouse".
+description: Design a buildable LEGO-style brick model from a text description and deliver its parts list, step-by-step instructions, rendered images, and a LEGO Pick a Brick order file. Use when the user asks to build, design, or make a model, MOC, or brick version of something, such as "build a small red lighthouse".
 ---
 
 # Build a brick model
@@ -50,9 +50,13 @@ list and the instructions from it, and render it with `render_model`.
    makes the booklet stale: run `render_model` and `render_instructions` again before
    you deliver. If `render_instructions` fails (no browser, or an error), deliver the
    rest without the PDF and tell the user why.
-9. **Deliver.** Write `<name>.md` with the parts list and the instructions, show the
-   user the images, and give the paths of the `.ldr`, `.md`, `-instructions.pdf`, and
-   PNG files.
+9. **Pick a Brick list.** When the model is final, call `pick_a_brick_list` with the
+   absolute path of the `.ldr` file, check its guesses on Pick a Brick, and call it
+   again with the results. See "Pick a Brick list" below. Run it again after any
+   change to the `.ldr` file.
+10. **Deliver.** Write `<name>.md` with the parts list, a "Buying the parts" section,
+    and the instructions. Show the user the images, and give the paths of the `.ldr`,
+    `.md`, `-instructions.pdf`, `-pick-a-brick.csv`, and PNG files.
 
 ## Detail baseline
 
@@ -173,6 +177,45 @@ steps list them. Group steps by `section`; when a step's `sectionQuantity` is mo
 than 1, say that the section is built that many times. Summed over all steps, each
 step's parts times its `sectionQuantity` equal `totalParts`. The deliverables include
 `<name>-instructions.pdf`.
+
+## Pick a Brick list
+
+`pick_a_brick_list` writes `<name>-pick-a-brick.csv`: one `elementId,quantity` line per
+LEGO element, the upload format of LEGO Pick a Brick. An element ID names one part in
+one color. Most parts have several element IDs per color, and Pick a Brick sells only
+some of them, so the tool starts each row on a guess (`source: "guess"`) and returns
+every row's `candidates`, plus `searchUrls` that cover all candidates.
+
+Check the guesses in a browser when one is available:
+
+1. **Search.** Open each URL in `searchUrls`. On the first visit, choose
+   **Continue** on the age screen and **Reject All** on the cookie banner. Each
+   result card is an element that Pick a Brick sells: read the element ID from the
+   card image's alt text, `Element <id>` (for example, run
+   `[...document.querySelectorAll('[data-test=pab-item] img')].map((i) => i.alt)`).
+   A row whose candidates include a shown ID is sold as that element.
+2. **Look up the rest.** For a row with no card, search Pick a Brick for its part
+   number. LEGO sometimes sells a part under a newer design number, and the search
+   finds it. Open the card of the matching part. Its color list holds each color
+   Pick a Brick sells, and each option's value is that color's element ID. LEGO's
+   color names differ from LDraw's: Dark Stone Grey is Dark Bluish Grey, Medium
+   Stone Grey is Light Bluish Grey, Brick Yellow is Tan, New Dark Red is Dark Red,
+   Warm Gold is Pearl Gold, and Transparent Black is Trans Brown. When the
+   color is listed, use its element ID; otherwise the row is not sold.
+3. **Record.** Call `pick_a_brick_list` again with `overrides`: one entry per row,
+   with the row's `part` and `color` and the element ID you found, or `null` when
+   Pick a Brick does not sell it. The result's `unchecked` count should be 0, and
+   `unusedOverrides` should be empty.
+
+Only read Pick a Brick: don't add pieces to the bag, sign in, or upload files.
+Without a browser, deliver the CSV with its guesses, and tell the user that some
+lines may fail to upload.
+
+In `<name>.md`, add a "Buying the parts" section after the parts list. Give the CSV's
+part count and line count, and list the rows the CSV leaves out (`not-sold` and
+`no-element`) with quantity, part, name, and color. Also list each part bought as a
+different design number than the model uses. Pick a Brick takes at most 200 lines
+per upload: when `lineCount` is over 200, say how to split the CSV.
 
 ## If rendering fails
 

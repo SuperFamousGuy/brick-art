@@ -21,7 +21,7 @@ import { fixtureSeedOptions, omrPages } from '../helpers/seeded.ts';
 
 type T = { after: (fn: () => Promise<void>) => void };
 const repoRoot = resolve(import.meta.dirname, '..', '..');
-const TAG = 'data-3-20261117';
+const TAG = 'data-4-20261117';
 
 let root: string;
 let fx: FixtureSources;
@@ -200,12 +200,12 @@ test('no release on an empty data dir seeds the fallback database locally', asyn
 
 test('findRelease ignores tags for another schema and picks the newest', async (t) => {
   const server = await serve(t, [
-    release('data-2-20991231'), release('data-3-20261110'), release(TAG), release('data-3-nightly'),
+    release('data-2-20991231'), release('data-4-20261110'), release(TAG), release('data-4-nightly'),
   ]);
-  const found = await findRelease(3, server.url);
+  const found = await findRelease(4, server.url);
   assert.equal(found?.tag, TAG);
   assert.equal(found?.assets.get('release.json'), `${server.url}/download/${TAG}/release.json`);
-  assert.equal(await findRelease(4, server.url), null);
+  assert.equal(await findRelease(5, server.url), null);
 });
 
 test('findRelease reads BRICK_ART_RELEASE_API and throws RateLimited on 429', async (t) => {

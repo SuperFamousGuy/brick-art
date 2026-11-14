@@ -6,7 +6,7 @@ import type { CreativeUse, FanSource } from '../curated/load.ts';
 import { SEED_VERSION, createSchema } from '../db/schema.ts';
 import { readPointer, writePointer } from '../db/open.ts';
 import {
-  writeColors, writeConnections, writeCreativeUses, writeManifest, writeParts, writePartColors,
+  writeColors, writeConnections, writeCreativeUses, writeElements, writeManifest, writeParts, writePartColors,
   writePlacements, writeProjectAuthors, writeProjectParts, writeProjects, writeRelationships, writeSources, writeSubmodels, writeTraits,
 } from '../db/write.ts';
 import type {
@@ -251,6 +251,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
       }
     }
     writePartColors(db, partColorRows);
+    writeElements(db, rb.elements.filter((e) => partNums.has(e.partNum)));
     writeRelationships(db, rb.relationships.map((r) => ({
       relType: r.relType, childPartNum: r.child, parentPartNum: r.parent,
     })));

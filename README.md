@@ -18,6 +18,8 @@ For each prompt, brick-art produces:
   three-quarter, made from the official 3D shape of every part.
 - **Model file**: an LDraw `.ldr` file that opens in LDraw tools such as
   LeoCAD, LDView, and BrickLink Studio.
+- **Pick a Brick list**: a `<name>-pick-a-brick.csv` file to order the parts
+  from LEGO. See [Buy the parts](#buy-the-parts).
 
 ## Example
 
@@ -25,6 +27,43 @@ For each prompt, brick-art produces:
 
 Claude responds with the parts list, the build steps, and rendered images of
 the completed lighthouse.
+
+## Buy the parts
+
+Each build includes a `<name>-pick-a-brick.csv` file. It lists the model's
+parts in the upload format of
+[LEGO Pick a Brick](https://www.lego.com/en-us/pick-and-build/pick-a-brick),
+LEGO's store for single pieces. Each line is a LEGO element ID, which names
+one part in one color, and a quantity:
+
+```
+elementId,quantity
+241226,2
+273026,4
+```
+
+To order the parts:
+
+1. Open [Pick a Brick](https://www.lego.com/en-us/pick-and-build/pick-a-brick)
+   and choose your country.
+2. Click **Upload List**.
+3. Click **Upload file** and select the `<name>-pick-a-brick.csv` file.
+4. Check the pieces that Pick a Brick shows, then click **Add to Bag**.
+5. Open your bag and check out.
+
+Pick a Brick doesn't sell every part in every color, and its stock changes.
+When Claude has a browser during the build, it checks each part on Pick a
+Brick, and the CSV holds only the parts that Pick a Brick listed at that
+time. Without a browser, the CSV holds Claude's best guess for each part, and
+some lines may fail to upload.
+The build's Markdown file lists the parts left out, under **Buying the
+parts**. Buy those from a marketplace such as [BrickLink](https://www.bricklink.com),
+or swap in a color that Pick a Brick sells. If the upload reports that it
+couldn't add a piece, that piece has gone out of stock since the file was
+made: search for its element ID on Pick a Brick to find another color.
+
+An upload holds up to 200 different pieces. Prices and stock are for the
+country you choose.
 
 ## Install
 
@@ -84,6 +123,8 @@ render the result:
 | `get_submodel` | Get the placed parts of one sub-assembly step by step, with colors, positions, and rotations. |
 | `database_status` | Check whether the database is ready, when it was built, and its source versions. |
 | `render_model` | Render an LDraw model file to PNG images, and tally the parts and colors it places. |
+| `render_instructions` | Check every build step, then render the PDF instruction booklet and one image per step. |
+| `pick_a_brick_list` | Write the model's parts as a LEGO Pick a Brick upload file, with every element ID that matches each part. |
 
 Default part lookups skip incomplete parts, printed variants, and placeholder
 colors. Project results carry the author, license, and URL of each model, so

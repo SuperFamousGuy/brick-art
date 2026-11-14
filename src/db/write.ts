@@ -129,6 +129,13 @@ export function writeRelationships(db: DatabaseSync, rows: readonly Relationship
     (r) => [r.relType, r.childPartNum, r.parentPartNum]);
 }
 
+export interface ElementRow { elementId: string; partNum: string; colorId: number; designId: string | null }
+
+export function writeElements(db: DatabaseSync, rows: readonly ElementRow[]): void {
+  batch(db, 'INSERT OR IGNORE INTO elements (element_id, part_num, color_id, design_id) VALUES (?, ?, ?, ?)', rows,
+    (r) => [r.elementId, r.partNum, r.colorId, r.designId]);
+}
+
 export function writeCreativeUses(db: DatabaseSync, rows: readonly CreativeUseRow[]): void {
   batch(db, 'INSERT INTO creative_uses (part_num, represents, note, reviewed, source) VALUES (' + marks(5) + ')', rows,
     (r) => [r.partNum, r.represents, r.note, bit(r.reviewed), r.source]);

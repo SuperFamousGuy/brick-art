@@ -25,7 +25,7 @@ test('loadRebrickable loads typed data from the fixtures', async (t) => {
   assert.equal(data.setYears.get('S4-1'), 1998);
   assert.equal(data.inventories.get(5), 'S3-1');
   assert.equal(data.inventoryParts.filter((r) => r.isSpare).length, 1);
-  assert.deepEqual(data.elements, [{ partNum: '3001', colorId: 2 }]);
+  assert.deepEqual(data.elements, [{ elementId: '300102', partNum: '3001', colorId: 2, designId: '3001' }]);
   assert.deepEqual(data.relationships, [
     { relType: 'P', child: '3001pr0001', parent: '3001' },
     { relType: 'M', child: '3009b', parent: '3009' },

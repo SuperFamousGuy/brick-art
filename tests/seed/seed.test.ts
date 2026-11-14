@@ -52,7 +52,7 @@ test('runSeed builds the database from fixture sources', async (t) => {
   assert.equal(manifest.count_parts, '20');
   assert.equal(manifest.ldraw_release, '2026-10');
   assert.equal(manifest.ldcad_commit, 'abc123');
-  assert.equal(manifest.seed_version, '3');
+  assert.equal(manifest.seed_version, '4');
   for (const k of ['curated_hash', 'started_at', 'finished_at', 'match_rate_top1000',
     'count_with_connections', 'count_incomplete', 'count_creative_loaded', 'count_creative_rejected']) {
     assert.ok(k in manifest, k);
