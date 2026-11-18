@@ -166,6 +166,12 @@ test('dbElementLookup reads checks for the color first, then checks for every co
   const lookup = dbElementLookup(db, LDCONFIG);
   assert.deepEqual(lookup.checkFor!('3001', 4), { elementId: '300121', checked: '2026-11-17' });
   assert.deepEqual(lookup.checkFor!('3001', 1), { elementId: null, checked: '2026-11-16' });
+  // A failed replacement keeps the previous checks.
+  assert.throws(() => writePickABrick(db, [
+    { partNum: '3001', colorId: 4, elementId: null, checked: '2026-11-18' },
+    { partNum: '3001', colorId: 4, elementId: null, checked: undefined as unknown as string, extra: () => 0 } as never,
+  ]));
+  assert.deepEqual(lookup.checkFor!('3001', 4), { elementId: '300121', checked: '2026-11-17' });
   db.close();
 });
 

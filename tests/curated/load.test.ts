@@ -229,6 +229,7 @@ test('pick-a-brick.yaml rejects bad entries and duplicates', async () => {
     '- part: 3001\n  color: 4\n  element: null\n  checked: "2026-11-17"\n',
     '- part: "3001"\n  color: 4\n  element: 300121\n  checked: "2026-11-17"\n',
     '- part: "3001"\n  color: 4\n  element: null\n  checked: "yesterday"\n',
+    '- part: "3001"\n  element: "300121"\n  checked: "2026-11-17"\n',
     '- part: "3001"\n  color: 4\n  element: null\n  checked: "2026-11-17"\n'.repeat(2),
   ];
   for (const yaml of bad) {

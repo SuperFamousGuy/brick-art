@@ -149,6 +149,8 @@ function parsePickABrick(doc: unknown): PickABrickCheck[] {
     if (element !== null && (typeof element !== 'string' || !/^\d{5,8}$/.test(element))) {
       fail('element must be a quoted element ID or null');
     }
+    // An element ID names one color, so only "not sold" may apply to every color.
+    if (element !== null && (color === undefined || color === null)) fail('a sold element needs a color');
     if (typeof e.checked !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.checked)) fail('checked must be a quoted YYYY-MM-DD date');
     const out = { part: e.part as string, color: (color ?? null) as number | null, element: element as string | null, checked: e.checked as string };
     const k = `${out.part}\u0000${out.color ?? '*'}`;

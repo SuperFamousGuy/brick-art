@@ -145,10 +145,18 @@ export interface PickABrickRow { partNum: string; colorId: number | null; elemen
  */
 export function writePickABrick(db: DatabaseSync, rows: readonly PickABrickRow[]): void {
   db.exec(`CREATE TABLE IF NOT EXISTS pick_a_brick (part_num TEXT, color_id INTEGER, element_id TEXT, checked TEXT);
-    CREATE INDEX IF NOT EXISTS idx_pick_a_brick_part ON pick_a_brick(part_num, color_id);
-    DELETE FROM pick_a_brick;`);
-  batch(db, 'INSERT INTO pick_a_brick (part_num, color_id, element_id, checked) VALUES (?, ?, ?, ?)', rows,
-    (r) => [r.partNum, r.colorId, r.elementId, r.checked]);
+    CREATE INDEX IF NOT EXISTS idx_pick_a_brick_part ON pick_a_brick(part_num, color_id);`);
+  // One transaction: readers see the old checks or the full replacement, and a failed insert keeps the old ones.
+  const ins = db.prepare('INSERT INTO pick_a_brick (part_num, color_id, element_id, checked) VALUES (?, ?, ?, ?)');
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM pick_a_brick');
+    for (const r of rows) ins.run(r.partNum, r.colorId, r.elementId, r.checked);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function writeCreativeUses(db: DatabaseSync, rows: readonly CreativeUseRow[]): void {
