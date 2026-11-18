@@ -34,20 +34,41 @@ test('cameraLines writes two named cameras', () => {
   for (const [i, name] of ['Front', 'Three-quarter'].entries()) {
     assert.match(
       lines[i],
-      new RegExp(`^0 !LEOCAD CAMERA FOV 30 POSITION \\S+ \\S+ \\S+ TARGET_POSITION \\S+ \\S+ \\S+ UP_VECTOR 0 -1 0 NAME ${name}$`),
+      new RegExp(`^0 !LEOCAD CAMERA FOV 30 POSITION \\S+ \\S+ \\S+ TARGET_POSITION \\S+ \\S+ \\S+ UP_VECTOR 0 0 1 NAME ${name}$`),
     );
-    assert.match(lines[i], /TARGET_POSITION 10 20 30 /);
+    assert.match(lines[i], /TARGET_POSITION 10 30 -20 /);
   }
   assert.ok(!lines.join('').includes('-0 '));
 });
 
-test('front camera looks from -z', () => {
+const read = (line: string) => {
+  const m = line.match(/POSITION (\S+) (\S+) (\S+) TARGET_POSITION (\S+) (\S+) (\S+) /)!;
+  const n = m.slice(1).map(Number);
+  return { pos: n.slice(0, 3), target: n.slice(3) };
+};
+
+test('front camera is in front of and above the target, in LeoCAD axes', () => {
   const [front] = cameraLines(box);
-  const m = front.match(/POSITION (\S+) (\S+) (\S+) TARGET/)!;
-  const [x, y, z] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const { pos, target } = read(front);
+  const [x, y, z] = pos.map((v, i) => v - target[i]);
   assert.ok(Math.abs(x) < 1e-6);
-  assert.ok(y < 0);
-  assert.ok(z < 0);
+  assert.ok(y < 0, 'LeoCAD y < 0 is the front (LDraw -z)');
+  assert.ok(z > 0, 'LeoCAD z > 0 is above');
   const radius = Math.hypot(100, 100, 100) / 2;
   assert.ok(Math.hypot(x, y, z) >= radius / Math.sin((15 * Math.PI) / 180) - 0.05);
+});
+
+test('three-quarter camera swings toward +x like render_model yaw 35', () => {
+  const { pos, target } = read(cameraLines(box)[1]);
+  const [x, y, z] = pos.map((v, i) => v - target[i]);
+  assert.ok(x > 0);
+  assert.ok(y < 0);
+  assert.ok(z > 0);
+  assert.ok(Math.abs(x / -y - Math.tan((35 * Math.PI) / 180)) < 0.01);
+});
+
+test('target converts LDraw (x, y, z) to LeoCAD (x, z, -y)', () => {
+  const [line] = cameraLines({ min: [0, -60, 0], max: [20, 0, 10] });
+  assert.match(line, /TARGET_POSITION 10 5 30 /);
+  assert.ok(!line.includes('-0 '));
 });

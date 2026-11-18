@@ -31,7 +31,15 @@ export function worldBounds(parts: Placement[], geom: GeometrySource): Bounds {
 /** Rounds to 2 decimals and prints 0 for -0. */
 const num = (n: number): string => String(Math.round(n * 100) / 100 + 0);
 
-/** One `0 !LEOCAD CAMERA` line per view, aimed at the box center. LDraw y points down. */
+/**
+ * LeoCAD stores POSITION, TARGET_POSITION, and UP_VECTOR in its own z-up axes, with no LDraw
+ * conversion (lcCamera::SaveLDraw and ParseLDrawLine in common/camera.cpp; Save and Load in
+ * common/lc_objectproperty.cpp). lcVector3LDrawToLeoCAD in common/lc_math.h maps LDraw (x, y, z)
+ * to (x, z, -y), and LeoCAD's default camera up vector is (0, 0, 1).
+ */
+const toLeoCAD = (v: number[]): number[] => [v[0], v[2], -v[1]];
+
+/** One `0 !LEOCAD CAMERA` line per view, aimed at the box center. Computed in LDraw space (y points down). */
 export function cameraLines(bounds: Bounds, views: RenderView[] = DEFAULT_VIEWS): string[] {
   const center = bounds.min.map((v, i) => (v + bounds.max[i]) / 2);
   const radius = Math.hypot(...bounds.min.map((v, i) => bounds.max[i] - v)) / 2;
@@ -40,10 +48,10 @@ export function cameraLines(bounds: Bounds, views: RenderView[] = DEFAULT_VIEWS)
     const yaw = (v.yaw * Math.PI) / 180;
     const pitch = (v.pitch * Math.PI) / 180;
     const dir = [Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
-    const pos = center.map((c, i) => c + dir[i] * dist);
+    const pos = toLeoCAD(center.map((c, i) => c + dir[i] * dist));
     return (
       `0 !LEOCAD CAMERA FOV ${CAMERA_FOV} POSITION ${pos.map(num).join(' ')} ` +
-      `TARGET_POSITION ${center.map(num).join(' ')} UP_VECTOR 0 -1 0 NAME ${CAMERA_NAMES[v.name] ?? v.name}`
+      `TARGET_POSITION ${toLeoCAD(center).map(num).join(' ')} UP_VECTOR 0 0 1 NAME ${CAMERA_NAMES[v.name] ?? v.name}`
     );
   });
 }
