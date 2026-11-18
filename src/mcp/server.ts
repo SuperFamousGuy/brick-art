@@ -23,6 +23,7 @@ import { buildInstructions } from '../instructions/build.ts';
 import { dbGeometry } from '../instructions/geometry.ts';
 import { renderModel, type RenderView } from '../render/render.ts';
 import type { ConnectionType } from '../types.ts';
+import { writeLeoCadFile } from '../leocad/write.ts';
 import { PICK_A_BRICK_URL, UPLOAD_LIMIT, writePickABrickList, type Override } from '../order/pick-a-brick.ts';
 
 const CONNECTION_TYPES = [
@@ -333,6 +334,28 @@ export function createServer(dataDir: string): McpServer {
           return handle;
         };
         return ok(await writePickABrickList({ ...args, library, db }));
+      } catch (err) {
+        return fail(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'leocad_file',
+    {
+      description: 'Writes <model>.mpd, one LDraw file holding the model and all its submodels, with LeoCAD model properties and Front and Three-quarter cameras, for opening, editing, and sharing in LeoCAD. Refuses to replace an .mpd edited since it was written unless overwrite is true.',
+      inputSchema: {
+        modelPath: z.string().describe('Absolute path to the .ldr model file. Submodel files it references are read from the same folder.'),
+        outDir: z.string().optional().describe("Folder for the .mpd (default: the model's folder)."),
+        overwrite: z.boolean().optional().describe('Replace an existing .mpd even if it was edited after this tool wrote it.'),
+      },
+    },
+    async (args: { modelPath: string; outDir?: string; overwrite?: boolean }): Promise<ToolResult> => {
+      try {
+        const db = current.get();
+        if (db === null) return notReady();
+        const library = await openLDrawLibrary(dataDir);
+        return ok(await writeLeoCadFile({ ...args, library, geometry: dbGeometry(db) }));
       } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
       }

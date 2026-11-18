@@ -47,6 +47,16 @@ export function splitMpd(text: string): { main: string[]; files: Map<string, str
 }
 
 /**
+ * Reads a model-folder file and returns its main block. Its embedded `0 FILE` blocks join `files`
+ * so later references can find them; a name already in `files` keeps its first definition.
+ */
+export function readLocalModel(path: string, files: Map<string, string[]>): string[] {
+  const { main, files: inner } = splitMpd(readFileSync(path, 'utf8'));
+  for (const [name, lines] of inner) if (!files.has(name)) files.set(name, lines);
+  return main;
+}
+
+/**
  * Counts the library parts a model places, by part and color, expanding submodels found in
  * the model (MPD) or in `localFiles` (model-folder files keyed by lowercased name).
  * Color 16 inherits the parent's color, as in LDraw.
@@ -61,7 +71,7 @@ export function tallyModel(
     if (inMpd) return inMpd;
     const path = localFiles.get(name);
     if (!path) return null;
-    const lines = splitMpd(readFileSync(path, 'utf8')).main;
+    const lines = readLocalModel(path, files);
     files.set(name, lines);
     return lines;
   };

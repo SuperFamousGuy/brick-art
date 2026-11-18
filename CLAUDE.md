@@ -9,7 +9,7 @@ a plugin, designs a buildable model from real brick parts.
 
 ## Required outputs for every build
 
-For each prompt, produce all three of these:
+For each prompt, produce all four of these:
 
 1. **Parts list.** Every brick the model uses, with part type, dimensions,
    color, and quantity.
@@ -20,6 +20,8 @@ For each prompt, produce all three of these:
 3. **Rendered images.** Studio-lit PNGs of the fully built model, front and
    three-quarter, made by the `render_model` tool from the official 3D shape of
    every part. Fall back to an SVG drawing only when rendering is unavailable.
+4. **LeoCAD file.** `<name>.mpd`, made by the `leocad_file` tool: the model and
+   its submodels in one file, with `Front` and `Three-quarter` cameras.
 
 ## Guiding principles
 
@@ -53,6 +55,11 @@ the model's parts as LEGO element IDs for upload to LEGO Pick a Brick. Element
 IDs come from the database's `elements` table (schema 4). The skill has Claude
 check the tool's guesses on Pick a Brick in a browser and pass the results back
 as overrides.
+
+The `leocad_file` MCP tool (`src/leocad/`) writes `<name>.mpd`, one LDraw file
+with the model and every submodel, LeoCAD model properties, and cameras that
+match the `render_model` views. It refuses to replace an `.mpd` edited since it
+was written, unless called with `overwrite`.
 
 The plugin packaging is in `.claude-plugin/`. Opening this repo directly in
 Claude Code is for development only; test the plugin with
