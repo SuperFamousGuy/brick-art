@@ -1,0 +1,108 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
+import { isPartFile, splitMpd } from '../render/tally.ts';
+import { modelFolderFiles } from '../render/serve.ts';
+
+export interface ModelInfo { name: string; title: string | null; author: string | null }
+/** files[0] is the main model; the rest are its submodels in first-reference order. */
+export interface Bundle { info: ModelInfo; files: { name: string; lines: string[] }[] }
+
+const MAX_DEPTH = 32;
+const HASH_PREFIX = '0 // brick-art leocad_file ';
+const HASH_LINE = /^0 \/\/ brick-art leocad_file ([0-9a-f]{64})$/;
+// Type-0 lines that belong to the build, not the header.
+const BUILD_META = /^0\s+(STEP|ROTSTEP|SAVE|CLEAR|PAUSE|WRITE|PRINT|\/\/)(\s|$)/;
+// Header lines that are not a plain title.
+const NOT_TITLE = /^(Name|Author|Theme|Unofficial|Official|Part|Subpart|Primitive|Model|Meta)\b|^(!|BFC\b|\/\/)/i;
+
+const normalize = (ref: string) => ref.trim().toLowerCase().replaceAll('\\', '/');
+const trimEnd = (lines: string[]) => {
+  const out = [...lines];
+  while (out.length && out.at(-1)!.trim() === '') out.pop();
+  return out;
+};
+
+function headerLength(lines: string[]): number {
+  let i = 0;
+  while (i < lines.length && /^\s*0(\s|$)/.test(lines[i]!) && !BUILD_META.test(lines[i]!.trim())) i++;
+  return i;
+}
+
+function readInfo(lines: string[], fileName: string): ModelInfo {
+  const header = lines.slice(0, headerLength(lines)).map((l) => l.trim().replace(/^0\s*/, ''));
+  const field = (key: string) => header.find((l) => new RegExp(`^${key}:`, 'i').test(l))?.slice(key.length + 1).trim() || null;
+  const named = field('Name');
+  const name = (named ?? fileName).replace(/^.*[\\/]/, '').replace(/\.(ldr|mpd|dat)$/i, '');
+  const first = header[0];
+  return { name, title: first && !NOT_TITLE.test(first) ? first : null, author: field('Author') };
+}
+
+/**
+ * Reads a model and inlines the submodels it references from its folder, using the submodel rule
+ * of `tallyModel`: not a library part, found next to the model, and no geometry of its own.
+ */
+export function bundleModel(modelPath: string, isLibraryPart: (ref: string) => boolean): Bundle {
+  const local = modelFolderFiles(dirname(modelPath));
+  const { main, files: embedded } = splitMpd(readFileSync(modelPath, 'utf8'));
+  const loadLocal = (key: string): string[] | null => {
+    const inMpd = embedded.get(key);
+    if (inMpd) return inMpd;
+    const path = local.get(key);
+    return path ? splitMpd(readFileSync(path, 'utf8')).main : null;
+  };
+
+  const mainName = basename(modelPath);
+  const out: Bundle['files'] = [{ name: mainName, lines: trimEnd(main) }];
+  const seen = new Set<string>();
+  const walk = (lines: string[], depth: number) => {
+    if (depth > MAX_DEPTH) throw new Error('model nesting is too deep (a submodel may include itself)');
+    for (const line of lines) {
+      const t = line.trim().split(/\s+/);
+      if (t[0] !== '1' || t.length < 15) continue;
+      const ref = normalize(t.slice(14).join(' '));
+      if (seen.has(ref)) continue;
+      const sub = isLibraryPart(ref) ? null : loadLocal(ref);
+      if (!sub) {
+        if (!isLibraryPart(ref) && !loadLocal(ref)) throw new Error(`"${ref}" is neither a library part nor a file next to the model`);
+        continue;
+      }
+      if (isPartFile(sub)) continue;
+      seen.add(ref);
+      const subLines = trimEnd(sub);
+      out.push({ name: ref, lines: subLines });
+      walk(subLines, depth + 1);
+    }
+  };
+  walk(out[0]!.lines, 0);
+  return { info: readInfo(out[0]!.lines, mainName), files: out };
+}
+
+/** Hash of the text with any hash line removed. */
+export function contentHash(text: string): string {
+  const kept = text.split('\n').filter((l) => !HASH_LINE.test(l));
+  return createHash('sha256').update(kept.join('\n')).digest('hex');
+}
+
+export function storedHash(text: string): string | null {
+  for (const l of text.split('\n')) {
+    const m = HASH_LINE.exec(l);
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
+/** The MPD text: LeoCAD MODEL lines and cameras after the main header, then the hash line. */
+export function mpdText(bundle: Bundle, cameraLines: string[]): string {
+  const [mainFile, ...subs] = bundle.files as [Bundle['files'][number], ...Bundle['files']];
+  const split = headerLength(mainFile.lines);
+  const { info } = bundle;
+  const model = [`0 !LEOCAD MODEL NAME ${info.name}`];
+  if (info.author) model.push(`0 !LEOCAD MODEL AUTHOR ${info.author}`);
+  if (info.title) model.push(`0 !LEOCAD MODEL DESCRIPTION ${info.title}`);
+  const head = [`0 FILE ${mainFile.name}`, ...mainFile.lines.slice(0, split), ...model, ...cameraLines];
+  const tail = [...mainFile.lines.slice(split), '0 NOFILE'];
+  for (const s of subs) tail.push(`0 FILE ${s.name}`, ...s.lines, '0 NOFILE');
+  const hash = contentHash([...head, ...tail].join('\n') + '\n');
+  return [...head, HASH_PREFIX + hash, ...tail].join('\n') + '\n';
+}
