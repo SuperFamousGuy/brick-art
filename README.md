@@ -28,8 +28,11 @@ For each prompt, brick-art produces:
 
 > Build a small red lighthouse on a rocky gray base.
 
-Claude responds with the parts list, the build steps, and rendered images of
-the completed lighthouse.
+Claude designs the model, shows rendered images of the completed lighthouse,
+and asks you to approve the design. After you approve it, Claude produces the
+parts list, the instruction booklet, the LeoCAD file, and the Pick a Brick
+order file. To get everything in one pass, say so in the prompt, for example
+"build it all without stopping".
 
 ## Buy the parts
 
