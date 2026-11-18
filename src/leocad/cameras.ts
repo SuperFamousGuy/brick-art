@@ -1,0 +1,49 @@
+import type { GeometrySource } from '../instructions/geometry.ts';
+import type { Placement } from '../instructions/steps.ts';
+import { DEFAULT_VIEWS, type RenderView } from '../render/render.ts';
+import type { Bounds, Vec3 } from '../types.ts';
+
+/** LeoCAD camera names for the render views (DEFAULT_VIEWS in src/render/render.ts). */
+export const CAMERA_NAMES: Record<string, string> = { front: 'Front', angle: 'Three-quarter' };
+export const CAMERA_FOV = 30;
+
+/** Half-extent of a 1x1 brick footprint and height, used when a part has no geometry. */
+const FALLBACK: Bounds = { min: [-10, -12, -10], max: [10, 12, 10] };
+
+/** World bounding box of the placed parts: each part's local box, transformed by rot and pos. */
+export function worldBounds(parts: Placement[], geom: GeometrySource): Bounds {
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of parts) {
+    const b = geom.get(p.part)?.bounds ?? FALLBACK;
+    for (let i = 0; i < 8; i++) {
+      const c = [i & 1 ? b.max[0] : b.min[0], i & 2 ? b.max[1] : b.min[1], i & 4 ? b.max[2] : b.min[2]];
+      for (let r = 0; r < 3; r++) {
+        const w = p.rot[r * 3] * c[0] + p.rot[r * 3 + 1] * c[1] + p.rot[r * 3 + 2] * c[2] + p.pos[r];
+        if (w < min[r]) min[r] = w;
+        if (w > max[r]) max[r] = w;
+      }
+    }
+  }
+  return { min, max };
+}
+
+/** Rounds to 2 decimals and prints 0 for -0. */
+const num = (n: number): string => String(Math.round(n * 100) / 100 + 0);
+
+/** One `0 !LEOCAD CAMERA` line per view, aimed at the box center. LDraw y points down. */
+export function cameraLines(bounds: Bounds, views: RenderView[] = DEFAULT_VIEWS): string[] {
+  const center = bounds.min.map((v, i) => (v + bounds.max[i]) / 2);
+  const radius = Math.hypot(...bounds.min.map((v, i) => bounds.max[i] - v)) / 2;
+  const dist = (1.15 * radius) / Math.sin((CAMERA_FOV / 2) * (Math.PI / 180));
+  return views.map((v) => {
+    const yaw = (v.yaw * Math.PI) / 180;
+    const pitch = (v.pitch * Math.PI) / 180;
+    const dir = [Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
+    const pos = center.map((c, i) => c + dir[i] * dist);
+    return (
+      `0 !LEOCAD CAMERA FOV ${CAMERA_FOV} POSITION ${pos.map(num).join(' ')} ` +
+      `TARGET_POSITION ${center.map(num).join(' ')} UP_VECTOR 0 -1 0 NAME ${CAMERA_NAMES[v.name] ?? v.name}`
+    );
+  });
+}
