@@ -232,3 +232,17 @@ test('parts matches tallyModel', () => {
   assert.deepEqual(m.parts, tally.map(({ part: p, color, count }) => ({ part: p, color, count })));
   assert.equal(m.totalParts, tally.reduce((a, r) => a + r.count, 0));
 });
+
+test('submodels embedded in a referenced .mpd file resolve here and in tallyModel', () => {
+  const path = write({
+    'model.ldr': [part(4, 0, 0, 0, 'wall.mpd')],
+    'wall.mpd': ['0 FILE wall.mpd', part(16, 0, 0, 0, 'window.ldr'), '0 NOFILE', '0 FILE window.ldr', part(16), part(16, 20), '0 NOFILE'],
+  });
+  const m = parseSteps(path, { isLibraryPart });
+  assert.deepEqual(m.parts, [{ part: '3001', color: 4, count: 2 }]);
+  const dir = path.slice(0, path.lastIndexOf('/'));
+  const local = new Map(readdirSync(dir).map((f) => [f, join(dir, f)]));
+  const library = { has: (p: string) => p.endsWith('.dat') } as unknown as ZipIndex;
+  const tally = tallyModel(readFileSync(path, 'utf8'), local, library, new Map());
+  assert.deepEqual(tally.map(({ part: p, color, count }) => ({ part: p, color, count })), m.parts);
+});

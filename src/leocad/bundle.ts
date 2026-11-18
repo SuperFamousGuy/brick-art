@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
-import { isPartFile, splitMpd } from '../render/tally.ts';
+import { readLocalModel, splitMpd } from '../render/tally.ts';
 import { modelFolderFiles } from '../render/serve.ts';
 
 export interface ModelInfo { name: string; title: string | null; author: string | null }
@@ -40,8 +40,8 @@ function readInfo(lines: string[], fileName: string): ModelInfo {
 }
 
 /**
- * Reads a model and inlines the submodels it references from its folder, using the submodel rule
- * of `tallyModel`: not a library part, found next to the model, and no geometry of its own.
+ * Reads a model and inlines every file it references that is not a library part: submodels and
+ * local part files from its folder, and blocks embedded in a referenced `.mpd`.
  */
 export function bundleModel(modelPath: string, isLibraryPart: (ref: string) => boolean): Bundle {
   const local = modelFolderFiles(dirname(modelPath));
@@ -50,7 +50,7 @@ export function bundleModel(modelPath: string, isLibraryPart: (ref: string) => b
     const inMpd = embedded.get(key);
     if (inMpd) return inMpd;
     const path = local.get(key);
-    return path ? splitMpd(readFileSync(path, 'utf8')).main : null;
+    return path ? readLocalModel(path, embedded) : null;
   };
 
   const mainName = basename(modelPath);
@@ -71,7 +71,7 @@ export function bundleModel(modelPath: string, isLibraryPart: (ref: string) => b
         if (!isLib) throw new Error(`"${ref}" is neither a library part nor a file next to the model`);
         continue;
       }
-      if (isPartFile(sub)) continue;
+      // A local part file (one with its own geometry) is inlined too, so the shared file is complete.
       seen.add(ref);
       const subLines = trimEnd(sub);
       out.push({ name: written.trim(), lines: subLines });

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { isPartFile, splitMpd } from '../render/tally.ts';
+import { isPartFile, readLocalModel, splitMpd } from '../render/tally.ts';
 import type { Mat3, Vec3 } from '../types.ts';
 
 export const CALLOUT_MAX_PARTS = 8;
@@ -122,7 +122,7 @@ export function parseSteps(modelPath: string, opts: { isLibraryPart: (file: stri
     if (inMpd) return inMpd;
     const path = localPaths.get(ref);
     if (!path) return null;
-    const lines = splitMpd(readFileSync(path, 'utf8')).main;
+    const lines = readLocalModel(path, files);
     files.set(ref, lines);
     return lines;
   };

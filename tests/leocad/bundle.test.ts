@@ -117,3 +117,24 @@ test('hash round-trips and detects edits', async () => {
   assert.notEqual(storedHash(text.replace('0 STEP', '0 // step')), contentHash(text.replace('0 STEP', '0 // step')));
   assert.equal(storedHash('0 FILE a.ldr\n'), null);
 });
+
+test('resolves submodels embedded in a referenced .mpd file', async () => {
+  const path = await fixture({
+    'house.ldr': [ref('wall.mpd')].join('\n'),
+    'wall.mpd': ['0 FILE wall.mpd', ref('window.ldr'), '0 NOFILE', '0 FILE window.ldr', BRICK, '0 NOFILE'].join('\n'),
+  });
+  const b = bundleModel(path, isLib);
+  assert.deepEqual(b.files.map((f) => f.name), ['house.ldr', 'wall.mpd', 'window.ldr']);
+  assert.deepEqual(b.files[2]!.lines, [BRICK]);
+});
+
+test('inlines a local part file with its own geometry, and what it references', async () => {
+  const path = await fixture({
+    'house.ldr': [BRICK, ref('custom.dat')].join('\n'),
+    'custom.dat': ['0 Custom part', '3 16 0 0 0 10 0 0 0 0 10', ref('trim.dat')].join('\n'),
+    'trim.dat': ['0 Trim', '3 16 0 0 0 5 0 0 0 0 5'].join('\n'),
+  });
+  const b = bundleModel(path, (r) => r === '3001.dat');
+  assert.deepEqual(b.files.map((f) => f.name), ['house.ldr', 'custom.dat', 'trim.dat']);
+  assert.equal(b.files[1]!.lines[1], '3 16 0 0 0 10 0 0 0 0 10');
+});
