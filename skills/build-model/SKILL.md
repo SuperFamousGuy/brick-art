@@ -50,13 +50,18 @@ list and the instructions from it, and render it with `render_model`.
    makes the booklet stale: run `render_model` and `render_instructions` again before
    you deliver. If `render_instructions` fails (no browser, or an error), deliver the
    rest without the PDF and tell the user why.
-9. **Pick a Brick list.** When the model is final, call `pick_a_brick_list` with the
+9. **LeoCAD file.** Call `leocad_file` with the absolute path of the `.ldr` file. It
+   writes `<name>.mpd` next to the model: one file holding the model and every
+   submodel, with `Front` and `Three-quarter` cameras that match the `render_model`
+   views. Run it again after any change to the `.ldr` file. See "Editing in LeoCAD"
+   below.
+10. **Pick a Brick list.** When the model is final, call `pick_a_brick_list` with the
    absolute path of the `.ldr` file, check its guesses on Pick a Brick, and call it
    again with the results. See "Pick a Brick list" below. Run it again after any
    change to the `.ldr` file.
-10. **Deliver.** Write `<name>.md` with the parts list, a "Buying the parts" section,
+11. **Deliver.** Write `<name>.md` with the parts list, a "Buying the parts" section,
     and the instructions. Show the user the images, and give the paths of the `.ldr`,
-    `.md`, `-instructions.pdf`, `-pick-a-brick.csv`, and PNG files.
+    `.mpd`, `.md`, `-instructions.pdf`, `-pick-a-brick.csv`, and PNG files.
 
 ## Detail baseline
 
@@ -226,3 +231,16 @@ library, about 145 MB, unless it is already cached.
 When `render_model` reports that no browser is installed, tell the user, and offer an
 SVG drawing of the model as a fallback. When it reports a missing part, fix the part
 name in the `.ldr` file and render again.
+
+## Editing in LeoCAD
+
+`leocad_file` writes `<name>.mpd`, which the user can open in LeoCAD to edit, view,
+render, and share. The `.ldr` and its submodel files are never changed.
+
+- The `.mpd` carries a hash line. If the user edits and saves it in LeoCAD, the tool
+  refuses to replace it. Don't pass `overwrite: true` unless the user asks.
+- After the user edits the `.mpd`, it is the input for any re-render. Pass the `.mpd`
+  to `render_model`, `render_instructions`, and `pick_a_brick_list`; each accepts it.
+  The `.ldr` no longer matches the model.
+- Not verified: a file saved by a real LeoCAD. Check that LeoCAD kept the `0 STEP`
+  lines and `0 //` step text, and tell the user if a step is missing.

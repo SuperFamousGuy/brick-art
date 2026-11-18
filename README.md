@@ -18,6 +18,9 @@ For each prompt, brick-art produces:
   three-quarter, made from the official 3D shape of every part.
 - **Model file**: an LDraw `.ldr` file that opens in LDraw tools such as
   LeoCAD, LDView, and BrickLink Studio.
+- **LeoCAD file**: a `<name>.mpd` file with the model and its submodels in one
+  file, for editing and sharing in LeoCAD. It has `Front` and
+  `Three-quarter` cameras.
 - **Pick a Brick list**: a `<name>-pick-a-brick.csv` file to order the parts
   from LEGO. See [Buy the parts](#buy-the-parts).
 
@@ -124,6 +127,7 @@ render the result:
 | `database_status` | Check whether the database is ready, when it was built, and its source versions. |
 | `render_model` | Render an LDraw model file to PNG images, and tally the parts and colors it places. |
 | `render_instructions` | Check every build step, then render the PDF instruction booklet and one image per step. |
+| `leocad_file` | Write one `.mpd` file with the model, its submodels, and two cameras, to open in LeoCAD. |
 | `pick_a_brick_list` | Write the model's parts as a LEGO Pick a Brick upload file, with every element ID that matches each part. |
 
 Default part lookups skip incomplete parts, printed variants, and placeholder
