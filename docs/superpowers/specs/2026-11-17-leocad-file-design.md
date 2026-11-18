@@ -65,7 +65,7 @@ properties and saved cameras.
   - Two cameras with `POSITION`, `TARGET_POSITION`, `UP_VECTOR`, and `NAME`,
     built from the model's bounding box and the `DEFAULT_VIEWS` yaw and pitch
     in `src/render/render.ts`, so they frame the model as the renders do.
-- **Overwrite rule:** the tool writes a `0 // brick-art leocad_file <hash>` line
+- **Overwrite rule:** the tool writes a `0 !BRICKART LEOCAD_FILE <hash>` line
   holding a hash of the content it wrote. If an existing `.mpd` no longer
   matches its hash, or has no hash line, the tool refuses unless called with
   `overwrite: true`, and says the file may hold LeoCAD edits.

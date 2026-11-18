@@ -9,12 +9,13 @@ export interface ModelInfo { name: string; title: string | null; author: string 
 export interface Bundle { info: ModelInfo; files: { name: string; lines: string[] }[] }
 
 const MAX_DEPTH = 32;
-const HASH_PREFIX = '0 // brick-art leocad_file ';
-const HASH_LINE = /^0 \/\/ brick-art leocad_file ([0-9a-f]{64})$/;
+// A `0 !BRICKART` meta, not a `0 //` comment: parseSteps reads every `0 //` line as step text.
+const HASH_PREFIX = '0 !BRICKART LEOCAD_FILE ';
+const HASH_LINE = /^0 !BRICKART LEOCAD_FILE ([0-9a-f]{64})$/;
 // Type-0 lines that belong to the build, not the header.
 const BUILD_META = /^0\s+(STEP|ROTSTEP|SAVE|CLEAR|PAUSE|WRITE|PRINT|\/\/)(\s|$)/;
 // Header lines that are not a plain title.
-const NOT_TITLE = /^(Name|Author|Theme|Unofficial|Official|Part|Subpart|Primitive|Model|Meta)\b|^(!|BFC\b|\/\/)/i;
+const NOT_TITLE = /^(Name|Author|Theme|Unofficial|Official|Part|Subpart|Primitive|Model|Meta)\s*:|^(!|BFC\b|\/\/)/i;
 
 const normalize = (ref: string) => ref.trim().toLowerCase().replaceAll('\\', '/');
 const trimEnd = (lines: string[]) => {
@@ -54,27 +55,30 @@ export function bundleModel(modelPath: string, isLibraryPart: (ref: string) => b
 
   const mainName = basename(modelPath);
   const out: Bundle['files'] = [{ name: mainName, lines: trimEnd(main) }];
-  const seen = new Set<string>();
-  const walk = (lines: string[], depth: number) => {
-    if (depth > MAX_DEPTH) throw new Error('model nesting is too deep (a submodel may include itself)');
+  const seen = new Set<string>([normalize(mainName)]);
+  const walk = (lines: string[], depth: number, ancestors: string[]) => {
+    if (depth > MAX_DEPTH) throw new Error(`model nesting is deeper than ${MAX_DEPTH} levels`);
     for (const line of lines) {
       const t = line.trim().split(/\s+/);
       if (t[0] !== '1' || t.length < 15) continue;
-      const ref = normalize(t.slice(14).join(' '));
+      const written = t.slice(14).join(' ');
+      const ref = normalize(written);
+      if (ancestors.includes(ref)) throw new Error(`"${written}" includes itself (a cycle through ${ancestors.join(' > ')})`);
       if (seen.has(ref)) continue;
-      const sub = isLibraryPart(ref) ? null : loadLocal(ref);
+      const isLib = isLibraryPart(ref);
+      const sub = isLib ? null : loadLocal(ref);
       if (!sub) {
-        if (!isLibraryPart(ref) && !loadLocal(ref)) throw new Error(`"${ref}" is neither a library part nor a file next to the model`);
+        if (!isLib) throw new Error(`"${ref}" is neither a library part nor a file next to the model`);
         continue;
       }
       if (isPartFile(sub)) continue;
       seen.add(ref);
       const subLines = trimEnd(sub);
-      out.push({ name: ref, lines: subLines });
-      walk(subLines, depth + 1);
+      out.push({ name: written.trim(), lines: subLines });
+      walk(subLines, depth + 1, [...ancestors, ref]);
     }
   };
-  walk(out[0]!.lines, 0);
+  walk(out[0]!.lines, 0, [normalize(mainName)]);
   return { info: readInfo(out[0]!.lines, mainName), files: out };
 }
 
@@ -97,6 +101,7 @@ export function mpdText(bundle: Bundle, cameraLines: string[]): string {
   const [mainFile, ...subs] = bundle.files as [Bundle['files'][number], ...Bundle['files']];
   const split = headerLength(mainFile.lines);
   const { info } = bundle;
+  // LeoCAD takes the model name from `0 Name:` and ignores this line; it is kept for other readers.
   const model = [`0 !LEOCAD MODEL NAME ${info.name}`];
   if (info.author) model.push(`0 !LEOCAD MODEL AUTHOR ${info.author}`);
   if (info.title) model.push(`0 !LEOCAD MODEL DESCRIPTION ${info.title}`);

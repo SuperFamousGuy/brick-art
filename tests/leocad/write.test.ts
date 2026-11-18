@@ -1,11 +1,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { writeLeoCadFile } from '../../src/leocad/write.ts';
 import { ZipIndex } from '../../src/render/zip-index.ts';
 import type { GeometrySource } from '../../src/instructions/geometry.ts';
+import { parseSteps } from '../../src/instructions/steps.ts';
 import { writeLibrary } from '../helpers/ldraw-fixture.ts';
 
 let tmp: string;
@@ -24,19 +25,20 @@ const geometry: GeometrySource = {
 const HOUSE = ['0 House', '0 Name: house.ldr', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 wall.ldr', '1 1 0 -20 0 1 0 0 0 1 0 0 0 1 box.dat', ''].join('\n');
 const WALL = ['0 Wall', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 box.dat', ''].join('\n');
 
-async function setup(name: string, house = HOUSE) {
+async function setup(name: string, house = HOUSE, houseName = 'house.ldr') {
   const dir = join(tmp, name);
-  await import('node:fs/promises').then((fs) => fs.mkdir(dir, { recursive: true }));
-  await writeFile(join(dir, 'house.ldr'), house);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, houseName), house);
   await writeFile(join(dir, 'wall.ldr'), WALL);
-  return { dir, modelPath: join(dir, 'house.ldr') };
+  return { dir, modelPath: join(dir, houseName) };
 }
 
 test('writes <name>.mpd next to the model', async () => {
   const { dir, modelPath } = await setup('basic');
   const before = await readFile(modelPath);
   const r = await writeLeoCadFile({ modelPath, library, geometry });
-  assert.ok(r.mpd.endsWith('/house.mpd'));
+  assert.equal(basename(r.mpd), 'house.mpd');
+  assert.equal(r.mpd, join(dir, 'house.mpd'));
   assert.deepEqual(r.submodels, ['wall.ldr']);
   assert.deepEqual(r.cameras, ['Front', 'Three-quarter']);
   const text = await readFile(join(dir, 'house.mpd'), 'utf8');
@@ -55,8 +57,10 @@ test('creates outDir', async () => {
 
 test('rewrites its own unedited file', async () => {
   const { modelPath } = await setup('rewrite');
+  const { mpd } = await writeLeoCadFile({ modelPath, library, geometry });
+  const first = await readFile(mpd);
   await writeLeoCadFile({ modelPath, library, geometry });
-  await writeLeoCadFile({ modelPath, library, geometry });
+  assert.deepEqual(await readFile(mpd), first);
 });
 
 test('refuses to overwrite an edited file', async () => {
@@ -85,4 +89,27 @@ test('rejects a non-model path and an .mpd input', async () => {
 test('rejects a model that places no parts', async () => {
   const { modelPath } = await setup('empty', '0 Empty\n');
   await assert.rejects(writeLeoCadFile({ modelPath, library, geometry }), /the model places no parts/);
+});
+
+test('the hash line does not leak into step text', async () => {
+  const house = ['0 House', '0 Name: house.ldr', '0 // Build the wall.', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 wall.ldr', '0 STEP', '1 1 0 -20 0 1 0 0 0 1 0 0 0 1 box.dat', '0 STEP', ''].join('\n');
+  const { modelPath } = await setup('steptext', house);
+  const { mpd } = await writeLeoCadFile({ modelPath, library, geometry });
+  assert.match(await readFile(mpd, 'utf8'), /^0 !BRICKART LEOCAD_FILE [0-9a-f]{64}$/m);
+  const isLibraryPart = (r: string) => library.has(`parts/${r}`);
+  const model = parseSteps(mpd, { isLibraryPart });
+  assert.equal(model.sections.at(-1)!.steps[0]!.text, 'Build the wall.');
+});
+
+test('finds the main section of a model with an upper-case file name', async () => {
+  const { modelPath } = await setup('upper', HOUSE, 'House.ldr');
+  const r = await writeLeoCadFile({ modelPath, library, geometry });
+  assert.equal(basename(r.mpd), 'House.mpd');
+});
+
+test('accepts a model that references a library primitive', async () => {
+  const house = ['0 House', '1 4 0 0 0 1 0 0 0 1 0 0 0 1 Stored.dat', '1 1 0 -20 0 1 0 0 0 1 0 0 0 1 box.dat', ''].join('\n');
+  const { modelPath } = await setup('primitive', house);
+  const r = await writeLeoCadFile({ modelPath, library, geometry });
+  assert.deepEqual(r.submodels, []);
 });

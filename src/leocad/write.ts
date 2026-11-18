@@ -27,11 +27,11 @@ export async function writeLeoCadFile(opts: LeoCadOptions): Promise<LeoCadResult
   if (ext === '.mpd') throw new Error(`the model is already an .mpd, so there is nothing to bundle: ${modelPath}`);
   if (!(await stat(modelPath).then((s) => s.isFile(), () => false))) throw new Error(`model file not found: ${modelPath}`);
 
-  const isLibraryPart = (ref: string) => opts.library.has(`parts/${ref}`);
+  const isLibraryPart = (ref: string) => opts.library.has(`parts/${ref}`) || opts.library.has(`p/${ref}`);
   const bundle = bundleModel(modelPath, isLibraryPart);
   // The main section is pushed last in `sections`; it holds the world-frame parts of the whole model.
   const model = parseSteps(modelPath, { isLibraryPart });
-  const mainName = basename(modelPath);
+  const mainName = basename(modelPath).toLowerCase();
   const main = model.sections.find((s) => s.file === mainName) ?? model.sections.at(-1);
   const placements = (main?.steps ?? []).flatMap((s) => s.added);
   if (placements.length === 0) throw new Error('the model places no parts');

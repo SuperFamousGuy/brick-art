@@ -16,7 +16,7 @@
 - The `.ldr` and its submodel files are never modified.
 - LeoCAD syntax per https://www.leocad.org/docs/meta.html: `0 !LEOCAD MODEL NAME|AUTHOR|DESCRIPTION <text>`; camera fields `POSITION <x y z>`, `TARGET_POSITION <x y z>`, `UP_VECTOR <x y z>`, `FOV <deg>`, then `NAME <name>` last.
 - Camera names: `Front` and `Three-quarter`, from `DEFAULT_VIEWS` in `src/render/render.ts` (`front` yaw 0 pitch 10, `angle` yaw 35 pitch 22).
-- Hash line: `0 // brick-art leocad_file <sha256 hex>` where the hash covers every line except the hash line itself.
+- Hash line: `0 !BRICKART LEOCAD_FILE <sha256 hex>` where the hash covers every line except the hash line itself.
 - No LeoCAD groups, lights, key frames, or `.lcd` output.
 
 ## Review Focus

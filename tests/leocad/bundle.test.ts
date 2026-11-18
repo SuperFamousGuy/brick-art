@@ -43,9 +43,24 @@ test('inlines nested submodels once each, in first-reference order', async () =>
   assert.deepEqual(names(mpdText(bundleModel(path, isLib), [])), ['house.ldr', 'wall.ldr', 'window.ldr']);
 });
 
-test('matches submodel names case-insensitively', async () => {
-  const path = await fixture({ 'house.ldr': ref('wall.ldr'), 'Wall.ldr': BRICK });
-  assert.deepEqual(names(mpdText(bundleModel(path, isLib), [])), ['house.ldr', 'wall.ldr']);
+test('matches submodel names case-insensitively and keeps the first spelling', async () => {
+  const path = await fixture({ 'house.ldr': [ref('Wall.ldr'), ref('WALL.ldr')].join('\n'), 'wall.ldr': BRICK });
+  assert.deepEqual(names(mpdText(bundleModel(path, isLib), [])), ['house.ldr', 'Wall.ldr']);
+});
+
+test('throws when a submodel includes the main model', async () => {
+  const path = await fixture({ 'house.ldr': ref('wall.ldr'), 'wall.ldr': [BRICK, ref('House.ldr')].join('\n') });
+  assert.throws(() => bundleModel(path, isLib), /includes itself/);
+});
+
+test('throws when a submodel includes itself', async () => {
+  const path = await fixture({ 'house.ldr': ref('wall.ldr'), 'wall.ldr': [BRICK, ref('wall.ldr')].join('\n') });
+  assert.throws(() => bundleModel(path, isLib), /includes itself/);
+});
+
+test('throws when the main model includes itself', async () => {
+  const path = await fixture({ 'house.ldr': [BRICK, ref('house.ldr')].join('\n') });
+  assert.throws(() => bundleModel(path, isLib), /includes itself/);
 });
 
 test('uses only the main block of a submodel that is itself an MPD', async () => {
@@ -69,7 +84,7 @@ test('writes MODEL lines from the header', async () => {
     '0 !LEOCAD MODEL NAME house', '0 !LEOCAD MODEL AUTHOR brick-art', '0 !LEOCAD MODEL DESCRIPTION Small House',
   ]);
   assert.equal(lines[7], '0 // cam');
-  assert.match(lines[8]!, /^0 \/\/ brick-art leocad_file [0-9a-f]{64}$/);
+  assert.match(lines[8]!, /^0 !BRICKART LEOCAD_FILE [0-9a-f]{64}$/);
 });
 
 test('a header without Name or Author gives NAME only', async () => {
@@ -78,6 +93,16 @@ test('a header without Name or Author gives NAME only', async () => {
   assert.ok(text.includes('0 !LEOCAD MODEL NAME house\n'));
   assert.ok(!text.includes('MODEL AUTHOR'));
   assert.ok(!text.includes('MODEL DESCRIPTION'));
+});
+
+test('a title that starts with a field word still becomes DESCRIPTION', async () => {
+  const path = await fixture({ 'house.ldr': ['0 Model T Ford', BRICK].join('\n') });
+  assert.ok(mpdText(bundleModel(path, isLib), []).includes('0 !LEOCAD MODEL DESCRIPTION Model T Ford\n'));
+});
+
+test('a first header line that is a field gives no DESCRIPTION', async () => {
+  const path = await fixture({ 'house.ldr': ['0 Name: x.ldr', BRICK].join('\n') });
+  assert.ok(!mpdText(bundleModel(path, isLib), []).includes('MODEL DESCRIPTION'));
 });
 
 test('strips CR', async () => {

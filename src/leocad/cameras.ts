@@ -39,6 +39,16 @@ const num = (n: number): string => String(Math.round(n * 100) / 100 + 0);
  */
 const toLeoCAD = (v: number[]): number[] => [v[0], v[2], -v[1]];
 
+/** Z (LeoCAD up) with its component along the view direction removed, so it is perpendicular to it. */
+function upVector(pos: number[], target: number[]): number[] {
+  const len = Math.hypot(...target.map((t, i) => t - pos[i]));
+  const fz = (target[2]! - pos[2]!) / len;
+  const front = target.map((t, i) => (t - pos[i]!) / len);
+  const up = [-fz * front[0]!, -fz * front[1]!, 1 - fz * front[2]!];
+  const n = Math.hypot(...up);
+  return up.map((v) => v / n);
+}
+
 /** One `0 !LEOCAD CAMERA` line per view, aimed at the box center. Computed in LDraw space (y points down). */
 export function cameraLines(bounds: Bounds, views: RenderView[] = DEFAULT_VIEWS): string[] {
   const center = bounds.min.map((v, i) => (v + bounds.max[i]) / 2);
@@ -49,9 +59,11 @@ export function cameraLines(bounds: Bounds, views: RenderView[] = DEFAULT_VIEWS)
     const pitch = (v.pitch * Math.PI) / 180;
     const dir = [Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
     const pos = toLeoCAD(center.map((c, i) => c + dir[i] * dist));
+    const target = toLeoCAD(center);
+    const up = upVector(pos, target);
     return (
       `0 !LEOCAD CAMERA FOV ${CAMERA_FOV} POSITION ${pos.map(num).join(' ')} ` +
-      `TARGET_POSITION ${toLeoCAD(center).map(num).join(' ')} UP_VECTOR 0 0 1 NAME ${CAMERA_NAMES[v.name] ?? v.name}`
+      `TARGET_POSITION ${target.map(num).join(' ')} UP_VECTOR ${up.map(num).join(' ')} NAME ${CAMERA_NAMES[v.name] ?? v.name}`
     );
   });
 }

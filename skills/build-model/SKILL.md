@@ -242,5 +242,7 @@ render, and share. The `.ldr` and its submodel files are never changed.
 - After the user edits the `.mpd`, it is the input for any re-render. Pass the `.mpd`
   to `render_model`, `render_instructions`, and `pick_a_brick_list`; each accepts it.
   The `.ldr` no longer matches the model.
-- Not verified: a file saved by a real LeoCAD. Check that LeoCAD kept the `0 STEP`
-  lines and `0 //` step text, and tell the user if a step is missing.
+- When LeoCAD saves, it rewrites the header and camera lines and uses CRLF line
+  endings. It keeps the `0 STEP` lines and other `0` comment lines. The rewrite drops
+  or changes the hash line, so `leocad_file` then refuses to overwrite the file. That
+  is intended: the file holds the user's edits.
