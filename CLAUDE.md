@@ -9,7 +9,10 @@ a plugin, designs a buildable model from real brick parts.
 
 ## Required outputs for every build
 
-For each prompt, produce all four of these:
+For each prompt, produce all four of these, in two phases. First design the
+model and produce the rendered images (3), then ask the user to approve the
+design. Produce the parts list (1), the instruction manual (2), and the LeoCAD
+file (4) only after the user approves:
 
 1. **Parts list.** Every brick the model uses, with part type, dimensions,
    color, and quantity.
@@ -54,7 +57,11 @@ The `pick_a_brick_list` MCP tool (`src/order/`) writes `<name>-pick-a-brick.csv`
 the model's parts as LEGO element IDs for upload to LEGO Pick a Brick. Element
 IDs come from the database's `elements` table (schema 4). The skill has Claude
 check the tool's guesses on Pick a Brick in a browser and pass the results back
-as overrides.
+as overrides. Checks worth keeping go in `curated/pick-a-brick.yaml` (sold
+elements, and parts or colors not sold), which the seed loads into the
+`pick_a_brick` table; `pick_a_brick_list` starts from them and `get_part` shows them
+on each color. `npm run pick-a-brick:apply` writes the file into the current
+database without a reseed.
 
 The `leocad_file` MCP tool (`src/leocad/`) writes `<name>.mpd`, one LDraw file
 with the model and every submodel, LeoCAD model properties, and cameras that

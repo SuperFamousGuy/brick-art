@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadCurated, validateUses, curatedDir } from '../../src/curated/load.ts';
+import { loadCurated, validatePickABrick, validateUses, curatedDir } from '../../src/curated/load.ts';
 
 const FAMILIES = 'families:\n  green: [2]\n  red: [4]\n';
 const USES = `- part: "33085"
@@ -195,4 +195,55 @@ test('the shipped fan sources include Datsville without a default license', asyn
   assert.equal(d.fetch.kind, 'github');
   assert.equal(d.defaultLicense, null);
   assert.ok(d.fetch.paths.length > 0);
+});
+
+test('pick-a-brick.yaml is optional, parsed, and validated', async () => {
+  const d = await makeDir(FAMILIES, USES);
+  try {
+    const without = await loadCurated(d);
+    assert.deepEqual(without.pickABrick, []);
+    await writeFile(join(d, 'pick-a-brick.yaml'), `- part: "3001"
+  color: 4
+  element: "300121"
+  checked: "2026-11-17"
+- part: "41767"
+  element: null
+  checked: "2026-11-17"
+`);
+    const withChecks = await loadCurated(d);
+    assert.notEqual(withChecks.hash, without.hash);
+    assert.deepEqual(withChecks.pickABrick, [
+      { part: '3001', color: 4, element: '300121', checked: '2026-11-17' },
+      { part: '41767', color: null, element: null, checked: '2026-11-17' },
+    ]);
+    const v = validatePickABrick(withChecks.pickABrick, new Set(['3001']));
+    assert.equal(v.accepted.length, 1);
+    assert.deepEqual(v.rejected.map((r) => r.reason), ['unknown part 41767']);
+  } finally {
+    await rm(d, { recursive: true, force: true });
+  }
+});
+
+test('pick-a-brick.yaml rejects bad entries and duplicates', async () => {
+  const bad = [
+    '- part: 3001\n  color: 4\n  element: null\n  checked: "2026-11-17"\n',
+    '- part: "3001"\n  color: 4\n  element: 300121\n  checked: "2026-11-17"\n',
+    '- part: "3001"\n  color: 4\n  element: null\n  checked: "yesterday"\n',
+    '- part: "3001"\n  element: "300121"\n  checked: "2026-11-17"\n',
+    '- part: "3001"\n  color: 4\n  element: null\n  checked: "2026-11-17"\n'.repeat(2),
+  ];
+  for (const yaml of bad) {
+    const d = await makeDir(FAMILIES, USES);
+    try {
+      await writeFile(join(d, 'pick-a-brick.yaml'), yaml);
+      await assert.rejects(loadCurated(d), /pick-a-brick\.yaml/);
+    } finally {
+      await rm(d, { recursive: true, force: true });
+    }
+  }
+});
+
+test('the repo\'s pick-a-brick.yaml loads', async () => {
+  const c = await loadCurated(curatedDir(join(import.meta.dirname, '..', '..')));
+  assert.ok(c.pickABrick.length > 0);
 });

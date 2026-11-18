@@ -1,21 +1,23 @@
 ---
 name: build-model
-description: Design a buildable LEGO-style brick model from a text description and deliver its parts list, step-by-step instructions, rendered images, and a LEGO Pick a Brick order file. Use when the user asks to build, design, or make a model, MOC, or brick version of something, such as "build a small red lighthouse".
+description: Design a buildable LEGO-style brick model from a text description, render it, and ask for approval; after approval, deliver its parts list, step-by-step instructions, LeoCAD file, and a LEGO Pick a Brick order file. Use when the user asks to build, design, or make a model, MOC, or brick version of something, such as "build a small red lighthouse".
 ---
 
 # Build a brick model
 
-Turn the user's description into a model built from real parts, and deliver three
-outputs that describe the same model:
+Turn the user's description into a model built from real parts. The work runs in two
+phases with an approval stop between them, because the full set of outputs takes a
+long time to produce:
 
-1. A parts list.
-2. Step-by-step build instructions.
-3. Rendered images of the finished model.
+- **Phase 1, design.** Design the model and render images of the finished build.
+  Then stop and ask the user to approve the design.
+- **Phase 2, build outputs.** After the user approves, produce the parts list, the
+  Pick a Brick order file, the LeoCAD file, and the instruction booklet.
 
-The LDraw model file is the source of truth. Write it first, then derive the parts
-list and the instructions from it, and render it with `render_model`.
+The LDraw model file is the source of truth. Write it first, render it with
+`render_model`, and derive every phase 2 output from it.
 
-## Workflow
+## Phase 1: Design
 
 1. **Study a reference.** Before you design, call `search_projects` for an official
    set or fan model of the same subject (or a close one), and read one with
@@ -29,10 +31,12 @@ list and the instructions from it, and render it with `render_model`.
    `get_part` for dimensions and connections, `find_compatible_parts` for what
    attaches to what, and `list_colors` with `partNum` to confirm a part comes in a
    color. `search_projects` and `get_submodel` show how official sets build similar
-   things, with exact positions.
+   things, with exact positions. A color in `get_part` with `pickABrick.elementId: null`
+   is not sold on Pick a Brick: pick another color or part.
 4. **Write the model.** Create a folder named after the model in the current working
    directory (for example `./lighthouse/`), and write `<name>.ldr` there. See
-   "LDraw model format".
+   "LDraw model format". Write the `0 STEP` lines and step text now, so phase 2 can
+   use the file as it is.
 5. **Render.** Call `render_model` with the absolute path of the `.ldr` file. It
    writes `<name>-front.png` and `<name>-angle.png` next to the model and returns
    their paths, plus a tally of every part and color the file places.
@@ -41,27 +45,46 @@ list and the instructions from it, and render it with `render_model`.
    tally with your intended parts list; the tally is what the file actually contains.
 7. **Refine.** Review the images against "Detail baseline" as a critic would. If the
    model looks blocky, flat, or pixelated, or if it misses a feature from your plan,
-   add detail and render again. Do at least one refinement pass before you deliver.
-8. **Instruction booklet.** When the model is final, call `render_instructions` with the
-   absolute path of the `.ldr` file. It checks every step for floating, overlapping, and
-   off-grid parts, then writes `<name>-instructions.pdf` and `<name>-step-NN.png` next to
-   the model (or in `outDir`). See "Instruction booklet" below for how to act on the
-   result. Any change to the `.ldr` file after this, including a fix for a finding,
-   makes the booklet stale: run `render_model` and `render_instructions` again before
+   add detail and render again. Do at least one refinement pass before you ask for
+   approval.
+8. **Ask for approval.** Show the user both images, and give a short summary: the
+   total part count and number of distinct parts from the tally, the footprint and
+   height in studs, the colors, and the features you modeled. Give the path of the
+   `.ldr` file. Then ask the user to approve the design or to say what to change, and
+   end your turn. Don't start phase 2 until the user approves.
+
+When the user asks for changes, edit the `.ldr` file, repeat steps 5 to 7, and ask
+for approval again. Skip the approval stop only when the user says to produce
+everything without stopping, for example "build it all" or "no need to check
+with me".
+
+## Phase 2: Build outputs
+
+Start phase 2 when the user approves the design. If the approval arrives in a later
+conversation, start from the existing `<name>.ldr` file; you don't need to render it
+again unless it changed.
+
+1. **Instruction booklet.** Call `render_instructions` with the absolute path of the
+   `.ldr` file. It checks every step for floating, overlapping, and off-grid parts,
+   then writes `<name>-instructions.pdf` and `<name>-step-NN.png` next to the model
+   (or in `outDir`). See "Instruction booklet" below for how to act on the result.
+   Any change to the `.ldr` file after this, including a fix for a finding, makes the
+   booklet stale: run `render_model` and `render_instructions` again before you
+   deliver. If a fix changes how the model looks, show the user the new images when
    you deliver. If `render_instructions` fails (no browser, or an error), deliver the
    rest without the PDF and tell the user why.
-9. **LeoCAD file.** Call `leocad_file` with the absolute path of the `.ldr` file. It
+2. **LeoCAD file.** Call `leocad_file` with the absolute path of the `.ldr` file. It
    writes `<name>.mpd` next to the model: one file holding the model and every
    submodel, with `Front` and `Three-quarter` cameras that match the `render_model`
    views. Run it again after any change to the `.ldr` file. See "Editing in LeoCAD"
    below.
-10. **Pick a Brick list.** When the model is final, call `pick_a_brick_list` with the
-   absolute path of the `.ldr` file, check its guesses on Pick a Brick, and call it
-   again with the results. See "Pick a Brick list" below. Run it again after any
-   change to the `.ldr` file.
-11. **Deliver.** Write `<name>.md` with the parts list, a "Buying the parts" section,
-    and the instructions. Show the user the images, and give the paths of the `.ldr`,
-    `.mpd`, `.md`, `-instructions.pdf`, `-pick-a-brick.csv`, and PNG files.
+3. **Pick a Brick list.** Call `pick_a_brick_list` with the absolute path of the
+   `.ldr` file, check its guesses on Pick a Brick, and call it again with the
+   results. See "Pick a Brick list" below. Run it again after any change to the
+   `.ldr` file.
+4. **Deliver.** Write `<name>.md` with the parts list, a "Buying the parts" section,
+   and the instructions. Give the paths of the `.ldr`, `.mpd`, `.md`,
+   `-instructions.pdf`, `-pick-a-brick.csv`, and PNG files.
 
 ## Detail baseline
 
@@ -189,7 +212,10 @@ step's parts times its `sectionQuantity` equal `totalParts`. The deliverables in
 LEGO element, the upload format of LEGO Pick a Brick. An element ID names one part in
 one color. Most parts have several element IDs per color, and Pick a Brick sells only
 some of them, so the tool starts each row on a guess (`source: "guess"`) and returns
-every row's `candidates`, plus `searchUrls` that cover all candidates.
+every row's `candidates`, plus `searchUrls` that cover all candidates. A row the database
+already has a Pick a Brick check for starts from it instead: `known-sold` with the element,
+or `known-not-sold`, with the check's date in `checkedOn`. Those rows don't count as
+`unchecked`.
 
 Check the guesses in a browser when one is available:
 
@@ -198,7 +224,9 @@ Check the guesses in a browser when one is available:
    result card is an element that Pick a Brick sells: read the element ID from the
    card image's alt text, `Element <id>` (for example, run
    `[...document.querySelectorAll('[data-test=pab-item] img')].map((i) => i.alt)`).
-   A row whose candidates include a shown ID is sold as that element.
+   A row whose candidates include a shown ID is sold as that element. A search by
+   element ID can miss an element that Pick a Brick does sell, so look up every row
+   without a card in step 2 before calling it not sold.
 2. **Look up the rest.** For a row with no card, search Pick a Brick for its part
    number. LEGO sometimes sells a part under a newer design number, and the search
    finds it. Open the card of the matching part. Its color list holds each color
@@ -211,6 +239,9 @@ Check the guesses in a browser when one is available:
    with the row's `part` and `color` and the element ID you found, or `null` when
    Pick a Brick does not sell it. The result's `unchecked` count should be 0, and
    `unusedOverrides` should be empty.
+
+When a `known-not-sold` row matters to the model, change the part or color to one that
+is sold, as you would for any row that is not sold.
 
 Only read Pick a Brick: don't add pieces to the bag, sign in, or upload files.
 Without a browser, deliver the CSV with its guesses, and tell the user that some

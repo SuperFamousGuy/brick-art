@@ -11,6 +11,7 @@ import type { UpdateState } from '../../src/release/download.ts';
 import { fixtureFetched, writeFixtureSources } from '../helpers/fixtures.ts';
 import { searchParts } from '../../src/lookup/search-parts.ts';
 import { getPart } from '../../src/lookup/get-part.ts';
+import { writePickABrick } from '../../src/db/write.ts';
 import { listColors } from '../../src/lookup/list-colors.ts';
 import { databaseStatus } from '../../src/lookup/status.ts';
 import { clampLimit } from '../../src/lookup/common.ts';
@@ -90,6 +91,24 @@ test('getPart returns detail', () => {
   assert.equal(p.connections[0]!.position.length, 3);
   assert.equal(getPart(db, 'nope'), null);
   assert.equal(getPart(db, '99999')!.isComplete, false);
+});
+
+test('getPart shows recorded Pick a Brick checks on each color', () => {
+  assert.ok(getPart(db, '3001')!.colors.every((c) => c.pickABrick === undefined));
+  const copyFile = join(tmp, 'pab-copy.db');
+  db.exec(`VACUUM INTO '${copyFile}'`);
+  const copy = new DatabaseSync(copyFile);
+  try {
+    writePickABrick(copy, [
+      { partNum: '3001', colorId: 4, elementId: '300121', checked: '2026-11-17' },
+      { partNum: '3001', colorId: null, elementId: null, checked: '2026-11-16' },
+    ]);
+    const byId = new Map(getPart(copy, '3001')!.colors.map((c) => [c.id, c.pickABrick]));
+    assert.deepEqual(byId.get(4), { elementId: '300121', checked: '2026-11-17' });
+    assert.deepEqual(byId.get(2), { elementId: null, checked: '2026-11-16' });
+  } finally {
+    copy.close();
+  }
 });
 
 test('getPart labels unreviewed creative uses as suggestion', () => {

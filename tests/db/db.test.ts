@@ -39,15 +39,15 @@ const part = (n: string, over: Partial<PartRow> = {}): PartRow => ({
   basePartNum: null, isSystem: true, ...over,
 });
 
-test('createSchema creates all 16 tables and symmetric compat rows', () => {
+test('createSchema creates all 17 tables and symmetric compat rows', () => {
   const db = new DatabaseSync(':memory:');
   createSchema(db);
   assert.deepEqual(names(db, 'table'), [
     'colors', 'connection_compat', 'connections', 'creative_uses', 'elements', 'manifest',
-    'part_colors', 'part_relationships', 'part_traits', 'parts', 'placements',
+    'part_colors', 'part_relationships', 'part_traits', 'parts', 'pick_a_brick', 'placements',
     'project_authors', 'project_parts', 'projects', 'sources', 'submodels',
   ]);
-  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 14);
+  assert.equal(names(db, 'index').filter((n) => !n.startsWith('sqlite_')).length, 15);
   const has = (a: string, b: string) =>
     db.prepare('SELECT 1 AS x FROM connection_compat WHERE a = ? AND b = ?').get(a, b) !== undefined;
   assert.ok(has('stud', 'stud_receptor') && has('stud_receptor', 'stud'));

@@ -31,7 +31,11 @@ export interface PartDetail {
     type: ConnectionType; position: Vec3; direction: Vec3;
     angleMin: number | null; angleMax: number | null; source: string;
   }[];
-  colors: { id: number; name: string; rgb: string | null; setCount: number; lastYear: number | null }[];
+  colors: {
+    id: number; name: string; rgb: string | null; setCount: number; lastYear: number | null;
+    /** A recorded Pick a Brick check: the element sold, or null when not sold; absent when unchecked. */
+    pickABrick?: { elementId: string | null; checked: string };
+  }[];
   relationships: { relType: string; child: string; parent: string }[];
   creativeUses: { represents: string; note: string | null; status: 'reviewed' | 'suggestion' }[];
 }
@@ -43,6 +47,15 @@ export function getPart(db: DatabaseSync, partNum: string): PartDetail | null {
   const p = db.prepare('SELECT * FROM parts WHERE part_num = ?').get(partNum) as Row | undefined;
   if (!p) return null;
   const all = (sql: string): Row[] => db.prepare(sql).all(partNum) as Row[];
+  const hasChecks = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pick_a_brick'").get();
+  const checkStmt = hasChecks
+    ? db.prepare(`SELECT element_id, checked FROM pick_a_brick WHERE part_num = ? AND (color_id = ? OR color_id IS NULL)
+        ORDER BY color_id IS NULL LIMIT 1`)
+    : null;
+  const pabCheck = (colorId: number): { elementId: string | null; checked: string } | null => {
+    const r = checkStmt?.get(partNum, colorId) as Row | undefined;
+    return r ? { elementId: r.element_id, checked: r.checked } : null;
+  };
 
   return {
     partNum: p.part_num, name: p.name, categoryId: p.category_id, categoryName: p.category_name,
@@ -64,7 +77,11 @@ export function getPart(db: DatabaseSync, partNum: string): PartDetail | null {
        JOIN colors c ON c.id = pc.color_id
        WHERE pc.part_num = ? AND c.is_placeholder = 0
        ORDER BY pc.set_count DESC, pc.last_year DESC, c.id ASC`,
-    ).map((r) => ({ id: r.id, name: r.name, rgb: r.rgb, setCount: r.set_count ?? 0, lastYear: r.last_year })),
+    ).map((r) => {
+      const c = { id: r.id, name: r.name, rgb: r.rgb, setCount: r.set_count ?? 0, lastYear: r.last_year };
+      const pab = pabCheck(r.id);
+      return pab ? { ...c, pickABrick: pab } : c;
+    }),
     relationships: (db
       .prepare(
         `SELECT rel_type, child_part_num, parent_part_num FROM part_relationships

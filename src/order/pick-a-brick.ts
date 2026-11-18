@@ -28,7 +28,12 @@ export interface ElementLookup {
   colorFor(ldrawColor: number): number | null;
   /** Elements of the part in the color, then of its mold variants and alternates when it has none. */
   elementsFor(partNum: string, colorId: number): Candidate[];
+  /** A recorded Pick a Brick check for the part in the color (or in every color), or null. */
+  checkFor?(partNum: string, colorId: number): KnownCheck | null;
 }
+
+/** A Pick a Brick check from the database: the element sold, or null when it is not sold. */
+export interface KnownCheck { elementId: string | null; checked: string }
 
 /** Claude's decision for one part and color, after checking Pick a Brick. */
 export interface Override {
@@ -40,7 +45,7 @@ export interface Override {
   elementId: string | null;
 }
 
-export type RowSource = 'guess' | 'checked' | 'not-sold' | 'no-element';
+export type RowSource = 'guess' | 'checked' | 'not-sold' | 'known-sold' | 'known-not-sold' | 'no-element';
 
 export interface PlanRow {
   part: string;
@@ -54,9 +59,12 @@ export interface PlanRow {
   /**
    * guess: the default pick among the candidates, not yet checked on Pick a Brick.
    * checked: set by an override. not-sold: an override says Pick a Brick does not sell it.
+   * known-sold / known-not-sold: from a check recorded in the database (see checkedOn).
    * no-element: no LEGO element is known for this part and color.
    */
   source: RowSource;
+  /** Date of the database check behind a known-sold or known-not-sold row, else null. */
+  checkedOn: string | null;
   candidates: Candidate[];
 }
 
@@ -93,8 +101,19 @@ export function planPickABrick(tally: readonly TallyRow[], lookup: ElementLookup
     const k = key(t.part, t.color);
     const o = byKey.get(k);
     if (o) used.add(k);
-    const base = { part: t.part, color: t.color, colorName: t.colorName, quantity: t.count, partNum, colorId, candidates };
+    const base = { part: t.part, color: t.color, colorName: t.colorName, quantity: t.count, partNum, colorId, candidates, checkedOn: null };
     if (o) return { ...base, elementId: o.elementId, source: o.elementId === null ? 'not-sold' : 'checked' };
+    const known = partNum !== null && colorId !== null ? lookup.checkFor?.(partNum, colorId) ?? null : null;
+    if (known) {
+      const id = known.elementId;
+      // A checked element may be filed under a newer design than the part's own elements.
+      const withKnown = id !== null && !candidates.some((c) => c.elementId === id)
+        ? [...candidates, { elementId: id, partNum: partNum!, designId: partNum! }] : candidates;
+      return {
+        ...base, candidates: withKnown, checkedOn: known.checked, elementId: id,
+        source: id === null ? 'known-not-sold' : 'known-sold',
+      };
+    }
     const pick = defaultElement(candidates);
     return { ...base, elementId: pick, source: pick === null ? 'no-element' : 'guess' };
   });
@@ -178,6 +197,12 @@ export function dbElementLookup(
      UNION SELECT child_part_num FROM part_relationships WHERE parent_part_num = ? AND rel_type IN ('M', 'A')
      ORDER BY 1`,
   );
+  const hasChecks = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pick_a_brick'").get();
+  const check = hasChecks
+    ? db.prepare(
+      `SELECT element_id AS e, checked AS c FROM pick_a_brick
+       WHERE part_num = ? AND (color_id = ? OR color_id IS NULL) ORDER BY color_id IS NULL LIMIT 1`)
+    : null;
   const get = (partNum: string, colorId: number): Candidate[] =>
     (els.all(partNum, colorId) as { e: string; p: string; d: string | null }[])
       .map((r) => ({ elementId: r.e, partNum: r.p, designId: r.d ?? r.p }));
@@ -206,6 +231,10 @@ export function dbElementLookup(
       return !isAlias && variant ? direct(variant[1]!) : null;
     },
     colorFor: (code) => colorMap.get(code) ?? null,
+    checkFor(partNum, colorId) {
+      const r = check?.get(partNum, colorId) as { e: string | null; c: string } | undefined;
+      return r ? { elementId: r.e, checked: r.c } : null;
+    },
     elementsFor(partNum, colorId) {
       const own = get(partNum, colorId);
       if (own.length > 0) return own;

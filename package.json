@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --disable-warning=ExperimentalWarning --test \"tests/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "release": "node src/entry/plugin-release.mjs"
+    "release": "node src/entry/plugin-release.mjs",
+    "pick-a-brick:apply": "node src/entry/apply-pick-a-brick.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

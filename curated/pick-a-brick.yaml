@@ -1,0 +1,92 @@
+# What LEGO Pick a Brick (https://www.lego.com/en-us/pick-and-build/pick-a-brick) sells, as checked
+# in a browser. The seed loads these into the pick_a_brick table, so pick_a_brick_list starts from
+# them instead of a guess and get_part shows them on each color.
+#
+#   part:    Rebrickable part number.
+#   color:   Rebrickable color id; leave it out when the entry holds for every color.
+#   element: the element ID Pick a Brick sells for the part in that color, or null when it does
+#            not sell it.
+#   checked: the date of the check (YYYY-MM-DD). Pick a Brick's stock changes, so re-check old ones.
+
+# Not sold (checked for the Titanic Prime model).
+- part: "14418"     # Plate 1 x 2 Towball Socket: only Light Bluish Gray is sold
+  color: 72
+  element: null
+  checked: "2026-11-17"
+- part: "3008"      # Brick 1 x 8
+  color: 320
+  element: null
+  checked: "2026-11-17"
+- part: "30414"     # Brick 1 x 4 with 4 Studs on One Side
+  color: 320
+  element: null
+  checked: "2026-11-17"
+- part: "3660"      # Brick Sloped Inverted 45 2 x 2: no black or grays
+  color: 0
+  element: null
+  checked: "2026-11-17"
+- part: "3660"
+  color: 71
+  element: null
+  checked: "2026-11-17"
+- part: "3660"
+  color: 72
+  element: null
+  checked: "2026-11-17"
+- part: "3680c02"   # Turntable 2 x 2 Plate, complete assembly
+  color: 72
+  element: null
+  checked: "2026-11-17"
+- part: "41767"     # Brick Wedged, Angled 4 x 2 Right: no search results in any color
+  element: null
+  checked: "2026-11-17"
+- part: "41768"     # Brick Wedged, Angled 4 x 2 Left: only Olive Green and Medium Lilac
+  color: 0
+  element: null
+  checked: "2026-11-17"
+- part: "3010"      # Brick 1 x 4: no transparent colors (use 3065 1 x 2 for windows)
+  color: 41
+  element: null
+  checked: "2026-11-17"
+- part: "3010"
+  color: 47
+  element: null
+  checked: "2026-11-17"
+
+# Sold, where the default pick is wrong or the element is filed under a newer design.
+- part: "14418"
+  color: 71
+  element: "6043639"
+  checked: "2026-11-17"
+- part: "3009"
+  color: 320
+  element: "4541528"
+  checked: "2026-11-17"
+- part: "3010"
+  color: 72
+  element: "4211103"
+  checked: "2026-11-17"
+- part: "3065"
+  color: 41
+  element: "6244910"
+  checked: "2026-11-17"
+- part: "3957a"     # sold as design 3957 "Stick/Aerial"
+  color: 19
+  element: "6454935"
+  checked: "2026-11-17"
+- part: "41769"
+  color: 0
+  element: "4160869"
+  checked: "2026-11-17"
+- part: "41770"
+  color: 0
+  element: "4161332"
+  checked: "2026-11-17"
+- part: "44302a"    # sold as the current design 44302
+  color: 72
+  element: "6267047"
+  checked: "2026-11-17"
+- part: "87079"
+  color: 72
+  element: "4560184"
+  checked: "2026-11-17"

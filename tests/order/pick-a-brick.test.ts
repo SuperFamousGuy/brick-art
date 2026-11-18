@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createSchema } from '../../src/db/schema.ts';
-import { writeColors, writeElements, writeParts, writeRelationships, type PartRow } from '../../src/db/write.ts';
+import { writeColors, writeElements, writeParts, writePickABrick, writeRelationships, type PartRow } from '../../src/db/write.ts';
 import {
   PICK_A_BRICK_URL, aliasTarget, dbElementLookup, defaultElement, planPickABrick, searchUrls, toCsv, writePickABrickList,
   type Candidate, type ElementLookup,
@@ -132,6 +132,53 @@ test('dbElementLookup maps LDraw parts and colors and falls back to related part
   assert.deepEqual(lookup.elementsFor('3001', 4), [{ elementId: '300121', partNum: '3001', designId: '3001' }]);
   assert.deepEqual(lookup.elementsFor('3794b', 4), [{ elementId: '6051511', partNum: '15573', designId: '15573' }]);
   assert.deepEqual(lookup.elementsFor('3001', 1), []);
+  db.close();
+});
+
+test('planPickABrick starts from recorded checks, and an override still wins', () => {
+  const lookup: ElementLookup = {
+    partFor: (p) => p,
+    colorFor: (c) => c,
+    elementsFor: (p) => (p === 'a' ? [cand('100', 'A')] : []),
+    checkFor: (p) => ({
+      a: { elementId: '777', checked: '2026-11-17' },
+      b: { elementId: null, checked: '2026-11-17' },
+    } as Record<string, { elementId: string | null; checked: string }>)[p] ?? null,
+  };
+  const plan = planPickABrick([row('a', 4, 2), row('b', 4, 1), row('c', 4, 1)], lookup, [{ part: 'c', color: 4, elementId: '5' }]);
+  assert.deepEqual(plan.rows.map((r) => [r.part, r.elementId, r.source, r.checkedOn]), [
+    ['a', '777', 'known-sold', '2026-11-17'],
+    ['b', null, 'known-not-sold', '2026-11-17'],
+    ['c', '5', 'checked', null],
+  ]);
+  // A checked element outside the part's own elements becomes a candidate, so searches cover it.
+  assert.deepEqual(plan.rows[0]!.candidates.map((c) => c.elementId), ['100', '777']);
+  assert.deepEqual(plan.lines, [{ elementId: '777', quantity: 2 }, { elementId: '5', quantity: 1 }]);
+});
+
+test('dbElementLookup reads checks for the color first, then checks for every color', () => {
+  const db = makeDb();
+  assert.equal(dbElementLookup(db, LDCONFIG).checkFor!('3001', 4), null);
+  writePickABrick(db, [
+    { partNum: '3001', colorId: 4, elementId: '300121', checked: '2026-11-17' },
+    { partNum: '3001', colorId: null, elementId: null, checked: '2026-11-16' },
+  ]);
+  const lookup = dbElementLookup(db, LDCONFIG);
+  assert.deepEqual(lookup.checkFor!('3001', 4), { elementId: '300121', checked: '2026-11-17' });
+  assert.deepEqual(lookup.checkFor!('3001', 1), { elementId: null, checked: '2026-11-16' });
+  // A failed replacement keeps the previous checks.
+  assert.throws(() => writePickABrick(db, [
+    { partNum: '3001', colorId: 4, elementId: null, checked: '2026-11-18' },
+    { partNum: '3001', colorId: 4, elementId: null, checked: undefined as unknown as string, extra: () => 0 } as never,
+  ]));
+  assert.deepEqual(lookup.checkFor!('3001', 4), { elementId: '300121', checked: '2026-11-17' });
+  db.close();
+});
+
+test('dbElementLookup works on a database built before the pick_a_brick table', () => {
+  const db = makeDb();
+  db.exec('DROP TABLE pick_a_brick');
+  assert.equal(dbElementLookup(db, LDCONFIG).checkFor!('3001', 4), null);
   db.close();
 });
 
