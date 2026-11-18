@@ -122,7 +122,7 @@ export function createServer(dataDir: string): McpServer {
   server.registerTool(
     'get_part',
     {
-      description: 'Returns full detail for one part: size, geometry, connections, traits, and colors.',
+      description: 'Returns full detail for one part: size, geometry, connections, traits, and colors. A color with pickABrick carries a recorded Pick a Brick check: the element sold, or elementId null when it is not sold.',
       inputSchema: { partNum: z.string().describe(partNumText) },
     },
     withDb((db, args: { partNum: string }) => getPart(db, args.partNum)),
@@ -312,7 +312,7 @@ export function createServer(dataDir: string): McpServer {
   server.registerTool(
     'pick_a_brick_list',
     {
-      description: `Writes <model>-pick-a-brick.csv, the model's parts as LEGO element IDs and quantities in the upload format of LEGO Pick a Brick (${PICK_A_BRICK_URL}). Most parts have several element IDs per color and Pick a Brick stocks only some, so each row starts on a default guess (source "guess"); check the guesses on Pick a Brick, then call again with overrides. Returns each row's candidates, searchUrls that cover every candidate, and lineCount (Pick a Brick takes at most ${UPLOAD_LIMIT} lines).`,
+      description: `Writes <model>-pick-a-brick.csv, the model's parts as LEGO element IDs and quantities in the upload format of LEGO Pick a Brick (${PICK_A_BRICK_URL}). Most parts have several element IDs per color and Pick a Brick stocks only some, so each row starts on a default guess (source "guess"), or on a check recorded in the database (source "known-sold" or "known-not-sold", dated by checkedOn); check the guesses on Pick a Brick, then call again with overrides. Returns each row's candidates, searchUrls that cover every candidate, and lineCount (Pick a Brick takes at most ${UPLOAD_LIMIT} lines).`,
       inputSchema: {
         modelPath: z.string().describe('Absolute path to the .ldr or .mpd model file. Submodel files it references are read from the same folder.'),
         outDir: z.string().optional().describe("Folder for the CSV (default: the model's folder)."),

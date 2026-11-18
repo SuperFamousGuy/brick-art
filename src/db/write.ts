@@ -136,6 +136,21 @@ export function writeElements(db: DatabaseSync, rows: readonly ElementRow[]): vo
     (r) => [r.elementId, r.partNum, r.colorId, r.designId]);
 }
 
+/** One Pick a Brick check; colorId null means every color, elementId null means not sold. */
+export interface PickABrickRow { partNum: string; colorId: number | null; elementId: string | null; checked: string }
+
+/**
+ * Replaces the Pick a Brick checks. Creates the table first, so it also updates a database built
+ * before the table existed.
+ */
+export function writePickABrick(db: DatabaseSync, rows: readonly PickABrickRow[]): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS pick_a_brick (part_num TEXT, color_id INTEGER, element_id TEXT, checked TEXT);
+    CREATE INDEX IF NOT EXISTS idx_pick_a_brick_part ON pick_a_brick(part_num, color_id);
+    DELETE FROM pick_a_brick;`);
+  batch(db, 'INSERT INTO pick_a_brick (part_num, color_id, element_id, checked) VALUES (?, ?, ?, ?)', rows,
+    (r) => [r.partNum, r.colorId, r.elementId, r.checked]);
+}
+
 export function writeCreativeUses(db: DatabaseSync, rows: readonly CreativeUseRow[]): void {
   batch(db, 'INSERT INTO creative_uses (part_num, represents, note, reviewed, source) VALUES (' + marks(5) + ')', rows,
     (r) => [r.partNum, r.represents, r.note, bit(r.reviewed), r.source]);

@@ -1,12 +1,12 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { basename, join } from 'node:path';
-import { curatedDir, loadCurated, validateUses } from '../curated/load.ts';
+import { curatedDir, loadCurated, validatePickABrick, validateUses } from '../curated/load.ts';
 import type { CreativeUse, FanSource } from '../curated/load.ts';
 import { SEED_VERSION, createSchema } from '../db/schema.ts';
 import { readPointer, writePointer } from '../db/open.ts';
 import {
-  writeColors, writeConnections, writeCreativeUses, writeElements, writeManifest, writeParts, writePartColors,
+  writeColors, writeConnections, writeCreativeUses, writeElements, writeManifest, writeParts, writePartColors, writePickABrick,
   writePlacements, writeProjectAuthors, writeProjectParts, writeProjects, writeRelationships, writeSources, writeSubmodels, writeTraits,
 } from '../db/write.ts';
 import type {
@@ -122,6 +122,8 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     const partNums = new Set(rb.parts.map((p) => p.partNum));
     const { accepted, rejected } = validateUses(curated.uses, partNums);
     for (const r of rejected) log(`creative use rejected (${r.reason}): ${r.use.part} / ${r.use.represents}`);
+    const pab = validatePickABrick(curated.pickABrick, partNums);
+    for (const r of pab.rejected) log(`pick a brick check rejected (${r.reason})`);
 
     db = new DatabaseSync(dbFile);
     createSchema(db);
@@ -258,6 +260,9 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
     writeCreativeUses(db, accepted.map((u: CreativeUse) => ({
       partNum: u.part, represents: u.represents, note: u.note, reviewed: u.reviewed, source: 'curated',
     })));
+    writePickABrick(db, pab.accepted.map((c) => ({
+      partNum: c.part, colorId: c.color, elementId: c.element, checked: c.checked,
+    })));
     writeSources(db, sources.records.map((r) => ({
       name: r.name, url: r.url, downloadedAt: r.downloadedAt, bytes: r.bytes,
       sha256: r.sha256, lastModified: r.lastModified,
@@ -285,6 +290,7 @@ export async function runSeed(opts: SeedOptions): Promise<SeedResult> {
       count_incomplete: nIncomplete,
       count_creative_loaded: accepted.length,
       count_creative_rejected: rejected.length,
+      count_pick_a_brick_checks: pab.accepted.length,
       ...projects,
     });
     db.close();

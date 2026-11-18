@@ -21,16 +21,27 @@ export type FanSource = {
   defaultLicense: string | null;
 };
 
+/** One Pick a Brick check: the element sold for a part in a color, or null when it is not sold. */
+export type PickABrickCheck = {
+  part: string;
+  /** Rebrickable color id, or null when the check holds for every color. */
+  color: number | null;
+  element: string | null;
+  checked: string;
+};
+
 export type Curated = {
   families: Map<number, string>;
   uses: CreativeUse[];
   fanSources: FanSource[];
+  pickABrick: PickABrickCheck[];
   hash: string;
 };
 
 const FAMILIES_FILE = 'color-families.yaml';
 const USES_FILE = 'creative-uses.yaml';
 const FAN_FILE = 'fan-sources.yaml';
+const PAB_FILE = 'pick-a-brick.yaml';
 
 export function curatedDir(repoRoot: string): string {
   return join(repoRoot, 'curated');
@@ -120,9 +131,41 @@ function parseFanSources(doc: unknown): FanSource[] {
   });
 }
 
+function parsePickABrick(doc: unknown): PickABrickCheck[] {
+  if (doc === null || doc === undefined) return [];
+  if (!Array.isArray(doc)) throw new Error(`${PAB_FILE}: expected a top-level list`);
+  const seen = new Set<string>();
+  return doc.map((raw, i): PickABrickCheck => {
+    const e = isRecord(raw) ? raw : {};
+    const fail = (problem: string): never => {
+      throw new Error(`${PAB_FILE}: entry ${i + 1}${typeof e.part === 'string' ? ` (${e.part})` : ''}: ${problem}`);
+    };
+    if (typeof e.part !== 'string' || e.part.trim() === '') fail('part must be a quoted part number');
+    const color = e.color;
+    if (color !== undefined && color !== null && (typeof color !== 'number' || !Number.isInteger(color))) {
+      fail('color must be an integer Rebrickable color id');
+    }
+    const element = e.element;
+    if (element !== null && (typeof element !== 'string' || !/^\d{5,8}$/.test(element))) {
+      fail('element must be a quoted element ID or null');
+    }
+    if (typeof e.checked !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.checked)) fail('checked must be a quoted YYYY-MM-DD date');
+    const out = { part: e.part as string, color: (color ?? null) as number | null, element: element as string | null, checked: e.checked as string };
+    const k = `${out.part}\u0000${out.color ?? '*'}`;
+    if (seen.has(k)) fail(`duplicate entry for color ${out.color ?? 'any'}`);
+    seen.add(k);
+    return out;
+  });
+}
+
 export async function loadCurated(dir: string): Promise<Curated> {
-  const names = [FAMILIES_FILE, USES_FILE, FAN_FILE].sort();
-  const bytes = await Promise.all(names.map((n) => readFile(join(dir, n))));
+  const names = [FAMILIES_FILE, USES_FILE, FAN_FILE, PAB_FILE].sort();
+  // The Pick a Brick file is optional; a missing one adds nothing to the hash.
+  const optional = new Set([PAB_FILE]);
+  const bytes = await Promise.all(names.map((n) => readFile(join(dir, n)).catch((err: NodeJS.ErrnoException) => {
+    if (optional.has(n) && err.code === 'ENOENT') return Buffer.alloc(0);
+    throw err;
+  })));
   const hash = createHash('sha256');
   for (const b of bytes) hash.update(b);
   const byName = new Map(names.map((n, i) => [n, bytes[i]!.toString('utf8')]));
@@ -130,6 +173,7 @@ export async function loadCurated(dir: string): Promise<Curated> {
     families: parseFamilies(parse(byName.get(FAMILIES_FILE)!)),
     uses: parseUses(parse(byName.get(USES_FILE)!)),
     fanSources: parseFanSources(parse(byName.get(FAN_FILE)!)),
+    pickABrick: parsePickABrick(parse(byName.get(PAB_FILE)!)),
     hash: hash.digest('hex'),
   };
 }
@@ -148,6 +192,20 @@ export function validateUses(
     else if (!partNums.has(use.part)) reason = `unknown part ${use.part}`;
     if (reason === null) accepted.push(use);
     else rejected.push({ use, reason });
+  }
+  return { accepted, rejected };
+}
+
+/** Keeps the Pick a Brick checks whose part is in the database; the rest are rejected with a reason. */
+export function validatePickABrick(
+  checks: PickABrickCheck[],
+  partNums: Set<string>,
+): { accepted: PickABrickCheck[]; rejected: { check: PickABrickCheck; reason: string }[] } {
+  const accepted: PickABrickCheck[] = [];
+  const rejected: { check: PickABrickCheck; reason: string }[] = [];
+  for (const check of checks) {
+    if (partNums.has(check.part)) accepted.push(check);
+    else rejected.push({ check, reason: `unknown part ${check.part}` });
   }
   return { accepted, rejected };
 }

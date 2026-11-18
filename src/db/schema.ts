@@ -45,6 +45,9 @@ CREATE TABLE part_colors (
 );
 CREATE TABLE part_relationships (rel_type TEXT, child_part_num TEXT, parent_part_num TEXT);
 CREATE TABLE elements (element_id TEXT PRIMARY KEY, part_num TEXT, color_id INTEGER, design_id TEXT);
+CREATE TABLE pick_a_brick (
+  part_num TEXT, color_id INTEGER, element_id TEXT, checked TEXT
+);
 CREATE TABLE creative_uses (part_num TEXT, represents TEXT, note TEXT, reviewed INTEGER, source TEXT);
 CREATE TABLE projects (
   id INTEGER PRIMARY KEY, source TEXT, source_key TEXT, kind TEXT, name TEXT, year INTEGER,
@@ -70,6 +73,7 @@ CREATE INDEX idx_connections_part ON connections(part_num);
 CREATE INDEX idx_connections_type ON connections(type);
 CREATE INDEX idx_part_colors_color ON part_colors(color_id);
 CREATE INDEX idx_elements_part_color ON elements(part_num, color_id);
+CREATE INDEX idx_pick_a_brick_part ON pick_a_brick(part_num, color_id);
 CREATE INDEX idx_creative_uses_represents ON creative_uses(represents);
 CREATE INDEX idx_projects_theme ON projects(theme);
 CREATE INDEX idx_projects_year ON projects(year);
